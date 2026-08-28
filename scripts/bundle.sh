@@ -8,10 +8,17 @@ cd "$(dirname "$0")/.."
 BUNDLE_ID="com.sahidalam.quietwords"
 APP="build/QuietWords.app"
 BIN=".build/release/QuietWords"
-# ponytail: ad-hoc signing. TCC keys ad-hoc apps by cdhash, so the accessibility grant
-# dies on every rebuild. Swap for a self-signed cert (SIGN_ID="Quiet Words Dev") when
-# re-granting gets old — see docs/plan.md Phase 0.
-SIGN_ID="${SIGN_ID:--}"
+# Prefer the stable self-signed identity; TCC keys ad-hoc apps by cdhash, so under ad-hoc
+# the accessibility grant dies on every rebuild. Create it with scripts/make-signing-cert.sh.
+if [ -z "${SIGN_ID:-}" ]; then
+    if security find-identity -v -p codesigning | grep -q "Quiet Words Dev"; then
+        SIGN_ID="Quiet Words Dev"
+    else
+        SIGN_ID="-"
+        echo "warning: signing ad-hoc — accessibility will need re-granting after every" >&2
+        echo "         build. Run ./scripts/make-signing-cert.sh once to stop that." >&2
+    fi
+fi
 
 [ -x "$BIN" ] || { echo "missing $BIN — run: swift build -c release" >&2; exit 1; }
 

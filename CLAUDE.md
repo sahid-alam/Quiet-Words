@@ -89,8 +89,9 @@ AnalyzerInput(buffer: AVAudioPCMBuffer, bufferStartTime: CMTime?)
    Slack, Discord. Pasteboard + synthetic `Cmd+V` is the primary path, AX is the
    optimisation. Save and restore the previous pasteboard contents.
 2. **Ad-hoc codesign breaks the accessibility grant on every rebuild.** TCC keys ad-hoc
-   apps by cdhash. If re-granting gets old, make a one-time self-signed cert (see
-   [docs/plan.md](docs/plan.md) Phase 0) and sign with that instead.
+   apps by cdhash. Solved: `scripts/make-signing-cert.sh` creates the self-signed
+   `Quiet Words Dev` identity once, and `bundle.sh` picks it up automatically. The grant
+   then survives rebuilds.
 3. **The HUD must not steal focus.** A panel that activates changes the frontmost app,
    so the text injects into the HUD instead of the user's editor. Non-activating panel,
    `ignoresMouseEvents`.
@@ -100,13 +101,23 @@ AnalyzerInput(buffer: AVAudioPCMBuffer, bufferStartTime: CMTime?)
 5. **Audio format mismatch fails silently.** Take the format from
    `availableCompatibleAudioFormats`, convert the tap buffer to it, pass the same format
    to `prepareToAnalyze(in:)`.
+6. **`availableCompatibleAudioFormats` is unordered.** It returns 16kHz *and* 8kHz, and
+   which one is `.first` changes between runs. Take `max(by: sampleRate)`.
+7. **`AVAudioFile.read(into:)` throws at EOF** rather than returning zero frames — and it
+   throws `_GenericObjCError.nilError`, which names nothing. Loop on
+   `framePosition < length`.
+8. **`assert` is compiled out of release builds**, and the app only runs as a release
+   bundle. Demo checks use `precondition`.
 
 ## Conventions
 
 - Swift 6 strict concurrency. The analyzer is an actor; keep audio off the main actor.
 - Persistence is JSON in `~/Library/Application Support/QuietWords/`. No SwiftData, no
   Core Data, until a JSON file measurably hurts.
-- One runnable check per non-trivial phase — a `demo()` or a `Tests/` case, no fixtures.
+- One runnable check per non-trivial phase, all in `Demo.swift`, run from inside the
+  bundle so TCC attributes the grants to the app:
+  `build/QuietWords.app/Contents/MacOS/QuietWords --demo audio|transcribe|inject`.
+  No committed fixtures — the transcription check renders its own audio with `say`.
 - Log with `os.Logger(subsystem: "com.sahidalam.quietwords", category: ...)`.
   Tail it with `log stream --predicate 'subsystem == "com.sahidalam.quietwords"'`.
 - Mark deliberate shortcuts with a `// ponytail:` comment naming the ceiling.
