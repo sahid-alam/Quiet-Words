@@ -185,6 +185,19 @@ private func demoDictionary() {
         precondition(got == expected, "\(input) -> \(got), expected \(expected)")
         print("  \(input)  ->  \(got)")
     }
+    let stutterCases: [(String, String)] = [
+        ("the the build is is failing on on main", "the build is failing on main"),
+        ("i i think we we should ship it", "i think we should ship it"),
+        ("he had had a point", "he had had a point"),        // legitimate double, left alone
+        ("no repeats in this one", "no repeats in this one"),
+        ("THE the case is is mixed", "THE case is mixed"),   // first spelling wins
+    ]
+    for (input, expected) in stutterCases {
+        let got = collapseRepeats(in: input)
+        precondition(got == expected, "\(input) -> \(got), expected \(expected)")
+        print("  \(input)  ->  \(got)")
+    }
+
     // The aggressive list does strip 'like' — which is why it is off by default.
     precondition(removeFillers(from: "write code like this", words: discourseMarkers) == "write code this")
     print("PASS dictionary")

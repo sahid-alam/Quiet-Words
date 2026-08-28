@@ -96,6 +96,35 @@ func removeFillers(from text: String, words: [String]) -> String {
     return out
 }
 
+/// English words that legitimately double. Everything else repeated back-to-back is a
+/// stutter, not intent.
+let legitimateDoubles: Set<String> = ["had", "that", "very", "no", "ha", "so"]
+
+/// "the the build is is failing" -> "the build is failing".
+///
+/// Worth knowing why this is regex and not a model: Apple's on-device LLM, in the only
+/// configuration that reliably refuses to answer the transcript instead of cleaning it,
+/// returned "so um the the build is is failing on on main again" completely unchanged
+/// after seven seconds. This does it in 37 microseconds. See docs/plan.md.
+func collapseRepeats(in text: String) -> String {
+    guard let regex = try? NSRegularExpression(
+        pattern: "(?<!\\w)(\\w+)(\\s+\\1)+(?!\\w)", options: [.caseInsensitive])
+    else { return text }
+
+    let source = text as NSString
+    var result = ""
+    var consumed = 0
+    for match in regex.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+        let word = source.substring(with: match.range(at: 1))
+        result += source.substring(with: NSRange(location: consumed, length: match.range.location - consumed))
+        result += legitimateDoubles.contains(word.lowercased())
+            ? source.substring(with: match.range)
+            : word
+        consumed = match.range.location + match.range.length
+    }
+    return result + source.substring(from: consumed)
+}
+
 struct Stats: Equatable {
     var words = 0
     var minutes = 0.0

@@ -316,6 +316,30 @@ explanation.
   for "more formal" or "as bullets". There a rephrase is the point, the latency is one
   the user chose to wait for, and a bad result is visible rather than silently pasted.
 
+- **Training our own model — not yet, and most of the reason is that the task is
+  smaller than it looks.** Apple's model, in its only safe configuration, returned
+  "so um the the build is is failing on on main again" unchanged after seven seconds.
+  A regex collapsing immediate word repetition does it in **37 microseconds**, and now
+  ships. Filler words were already a word list. What actually remains for a model is
+  narrow: false starts and self-corrections ("use Postgres — actually no, SQLite"),
+  telling "code like this" from "it was like really slow", and reflowing run-on speech
+  into sentences.
+
+  If that residue turns out to be worth it after real daily use, the order is:
+
+  | Approach | Feasible? | Catch |
+  |---|---|---|
+  | From scratch | No | Millions of dollars for something worse than free |
+  | LoRA on an open 1–3B via MLX | Yes, hours on this Mac | Needs data — solvable by inversion: take clean text and *inject* fillers and stutters, generating (messy, clean) pairs by construction |
+  | `.fmadapter` for Apple's model | Yes — `SystemLanguageModel.Adapter` and `SystemLanguageModel(adapter:)` exist | Adapters pin to a base-model version. `compatibleAdapterIdentifiers` and `removeObsoleteAdapters()` exist precisely because Apple's model updates break them — retraining every macOS release, forever |
+
+  Fine-tuning is also the thing that fixes the failure measured above: a model trained
+  only to clean transcripts was never trained to answer them, so it cannot helpfully
+  reply "The meeting tomorrow is scheduled for 10:00 AM" to your dictation.
+
+  Do not start this until the rule-based cleanup has been used daily for weeks and the
+  residue can be named from real transcripts. `history.json` is the corpus for that.
+
 - **Cloud LLM APIs, free tiers included.** Every dictated word would leave the machine,
   the app would stop working offline, and network latency lands in the hot path — to buy
   something an on-device model already does. It also costs the only structural advantage
