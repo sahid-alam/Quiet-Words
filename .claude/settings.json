@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(swift run:*)",
+      "Bash(swift scripts/probe-speech.swift)",
+      "Bash(./scripts/bundle.sh:*)",
+      "Bash(codesign:*)",
+      "Bash(xcrun:*)",
+      "Bash(plutil:*)",
+      "Bash(log stream:*)",
+      "Bash(log show:*)",
+      "Bash(open build/QuietWords.app)",
+      "Bash(pkill -x QuietWords)",
+      "Bash(tccutil reset Microphone com.sahidalam.quietwords)",
+      "Bash(tccutil reset Accessibility com.sahidalam.quietwords)"
+    ]
+  }
+}
