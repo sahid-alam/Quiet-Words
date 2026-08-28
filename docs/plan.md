@@ -284,11 +284,33 @@ explanation.
   | Plain instructions | `Sure, I can check the logs for you.` | — |
   | Transcript in `<t>` delimiters | `<t>hey can you check the logs for me</t>` | `<t>cats are cute</t>` ×3 |
 
-  Loose prompting makes it *answer* the dictation instead of cleaning it. Strict
-  prompting stops that but also stops it cleaning — "um so like i was thinking" survived
-  intact — and it still derails on some inputs. Latency ranged 500ms to 7.7s, against
-  ~800ms for the entire current pipeline. A pass that silently rewrites the user's words
-  into an answer is worse than no pass.
+  Three configurations were measured against the same samples:
+
+  | Configuration | Safe outputs | Actually cleaned? | Latency |
+  |---|---|---|---|
+  | Plain instructions | 0 / 6 | answered the dictation instead | 0.5–7.7s |
+  | Transcript in `<t>` delimiters | 3 / 5 | barely | 3.8–7.7s |
+  | `@Generable` structured output | 4 / 5 | **no — returned input unchanged** | 6.7–13s |
+
+  Constrained decoding is what stops it answering; nothing stops it being useless. In the
+  only safe configuration it left "so um the the build is is failing on on main again"
+  entirely untouched and took seven seconds to do it. Loose prompting is worse: it
+  invented a meeting time ("The meeting tomorrow is scheduled for 10:00 AM") and wrote a
+  full poem when asked to clean "write me a poem about cats".
+
+  **A subsequence verifier caught 100% of the bad outputs** and is worth keeping in mind
+  if an LLM is ever wired in: require every word of the output to appear in the input in
+  order, allowing punctuation and capitalisation to change, and fall back to the raw
+  transcript otherwise. Ten lines, deterministic, and it turns an untrustworthy model
+  into a safe one — it just cannot make an incapable one useful.
+
+  **How Wispr Flow appears to have no latency**, since it comes up: it overlaps the pass
+  with speech — audio streams to their servers while you talk, ASR finalises segments
+  continuously, and cleanup runs per segment, so only the tail is outstanding at key-up.
+  That technique is copyable here; `SpeechTranscriber` already emits final segments
+  progressively. What is not copyable is a 7B–70B model on a server GPU, most likely
+  fine-tuned for this one task and therefore never trained to answer anything. Latency
+  was never the blocker.
 
   Where the model *does* belong is explicit, user-invoked transforms — select text, ask
   for "more formal" or "as bullets". There a rephrase is the point, the latency is one
