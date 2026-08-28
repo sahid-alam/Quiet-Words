@@ -40,10 +40,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let corrected = store.correct(text)
             log.log("dictated: \(corrected, privacy: .public)")
-            store.record(Entry(text: corrected, duration: lastHold,
-                               app: target?.bundleIdentifier))
+            let entry = Entry(text: corrected, duration: lastHold,
+                              app: target?.bundleIdentifier)
             let target = self.target
-            Task { await Injector.inject(corrected, into: target) }
+            Task {
+                // Inject first: writing history is a synchronous JSON encode, and doing it
+                // before the paste puts it straight in the latency path of every dictation.
+                await Injector.inject(corrected, into: target)
+                self.store.record(entry)
+            }
         }
         installHotkey()
         buildStatusItem()

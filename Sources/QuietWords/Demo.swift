@@ -74,6 +74,10 @@ private func demoTranscribe() async {
         precondition(say.terminationStatus == 0, "say failed")
 
         let session = try await TranscriptionSession.make(locale: Locale(identifier: "en-US"))
+        // Exercise the contextual-strings path too — it runs on every real dictation once
+        // the user has a dictionary, and setContext rejecting this ordering would fail
+        // silently otherwise.
+        await session.bias(toward: ["Xcode", "Claude Code"])
         let file = try AVAudioFile(forReading: url)
         guard let converter = AVAudioConverter(from: file.processingFormat, to: session.format) else {
             print("FAIL no converter"); exit(1)
