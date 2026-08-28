@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkey: Hotkey?
     private let dictation = Dictation()
     private let hud = HUD()
+    private let store = Store()
+    private lazy var mainWindow = MainWindowController(store: store)
+    private var lastHold: TimeInterval = 0
     /// Whoever was frontmost at key-down owns the text, even if focus moves while talking.
     private var target: NSRunningApplication?
 
@@ -34,9 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in hud.push(level: level) }
         }
         dictation.onTranscript = { [weak self] text in
-            log.log("dictated: \(text, privacy: .public)")
-            let target = self?.target
-            Task { await Injector.inject(text, into: target) }
+            guard let self else { return }
+            let corrected = store.correct(text)
+            log.log("dictated: \(corrected, privacy: .public)")
+            store.record(Entry(text: corrected, duration: lastHold,
+                               app: target?.bundleIdentifier))
+            let target = self.target
+            Task { await Injector.inject(corrected, into: target) }
         }
         installHotkey()
         buildStatusItem()
@@ -48,9 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Capture the target before the HUD appears, so a HUD that misbehaves and
             // steals focus can't quietly retarget the injection.
             target = NSWorkspace.shared.frontmostApplication
+            dictation.contextualStrings = store.contextualStrings
             hud.show()
             dictation.begin()
         case .up(let held):
+            lastHold = held
             hud.hide()
             held < Self.minimumHold ? dictation.cancel() : dictation.end()
         case .cancel:
@@ -93,9 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(withTitle: "Hold Right Option to dictate", action: nil, keyEquivalent: "").isEnabled = false
             menu.addItem(.separator())
         }
+        let history = menu.addItem(withTitle: "History & Dictionary…",
+                                   action: #selector(openMainWindow), keyEquivalent: "")
+        history.target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Quiet Words", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
     }
+
+    @objc private func openMainWindow() { mainWindow.show() }
 
     @objc private func openAccessibilitySettings() {
         NSWorkspace.shared.open(URL(string:

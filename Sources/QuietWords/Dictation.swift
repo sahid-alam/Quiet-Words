@@ -15,6 +15,8 @@ final class Dictation {
     var onVolatile: @MainActor (String) -> Void = { _ in }
     /// Per-buffer RMS, 0...1. Fires on the audio thread.
     var onLevel: @Sendable (Float) -> Void = { _ in }
+    /// Dictionary terms to bias the model toward. Read fresh at each key-down.
+    var contextualStrings: [String] = []
 
     private let capture = AudioCapture()
     private var warm: Task<TranscriptionSession, Error>?
@@ -49,6 +51,7 @@ final class Dictation {
         guard active == nil, let warm else { return }
         do {
             let session = try await warm.value
+            await session.bias(toward: contextualStrings)
             let volatileSink = onVolatile
             let stream = try capture.start(format: session.format, onLevel: onLevel)
             try await session.start(inputs: stream) { text in

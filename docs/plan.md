@@ -192,6 +192,10 @@ from a shell inherits the terminal's TCC identity and `CGEvent.post` silently no
   - Feed the same terms to the transcriber as `contextualStrings` via `AnalysisContext`
     so the model biases toward them up front rather than only correcting after.
 - Settings: hotkey binding, locale, launch-at-login, auto-punctuation toggle.
+  - **Auto-punctuation cannot be a setting.** `SpeechTranscriber.TranscriptionOption` has
+    exactly one case, `.etiquetteReplacements` (profanity masking). `.punctuation` lives on
+    `DictationTranscriber`, a different module. `SpeechTranscriber` always punctuates.
+  - Hotkey binding and locale are still open; launch-at-login is Phase 7.
 
 > **Check:** a dictionary entry `claude code` corrects a transcript containing
 > "clawed code", asserted in a unit test over the post-processing function alone.

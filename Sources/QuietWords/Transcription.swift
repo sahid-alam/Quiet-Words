@@ -33,16 +33,28 @@ final class TranscriptionSession {
         let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
         try await installAssets(for: transcriber, locale: locale)
 
-        // Highest rate wins — the list is unordered and also offers 8kHz, which costs
-        // accuracy for nothing.
-        let formats = await transcriber.availableCompatibleAudioFormats
-        guard let format = formats.max(by: { $0.sampleRate < $1.sampleRate }) else {
+        // Let the framework pick. availableCompatibleAudioFormats is unordered and also
+        // offers 8kHz, so taking .first there quietly costs accuracy.
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
             throw TranscriptionError.noCompatibleFormat
         }
         let session = TranscriptionSession(transcriber: transcriber, format: format)
         try await session.analyzer.prepareToAnalyze(in: format)
         logger.log("session ready locale=\(locale.identifier, privacy: .public) format=\(format, privacy: .public)")
         return session
+    }
+
+    /// Biases the model toward terms it would otherwise mishear — names, product names,
+    /// jargon. Cheaper than correcting them afterwards, and it fixes the volatile tail too.
+    func bias(toward strings: [String]) async {
+        guard !strings.isEmpty else { return }
+        let context = AnalysisContext()
+        context.contextualStrings[.general] = strings
+        do {
+            try await analyzer.setContext(context)
+        } catch {
+            logger.error("setContext failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Begins analysis. `onVolatile` fires with the un-committed tail — display only.

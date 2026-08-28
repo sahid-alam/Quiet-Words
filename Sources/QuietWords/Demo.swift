@@ -11,6 +11,8 @@ func runDemo(_ name: String) async {
     case "transcribe": await demoTranscribe()
     case "inject": await demoInject()
     case "hud": await demoHUD()
+    case "dictionary": demoDictionary()
+    case "window": await demoWindow()
     default: print("unknown demo '\(name)'"); exit(2)
     }
 }
@@ -150,4 +152,67 @@ private func demoHUD() async {
     print("frontmost before=\(before) after=\(after)")
     precondition(before == after, "the HUD stole focus — injection would land in the wrong app")
     print("PASS hud")
+}
+
+/// Phase 6's check: the post-processing function alone, no store and no window.
+private func demoDictionary() {
+    let terms = [
+        Term(heard: "clawed code", meant: "Claude Code"),
+        Term(heard: "ex code", meant: "Xcode"),
+    ]
+    let cases: [(String, String)] = [
+        ("I opened clawed code in ex code.", "I opened Claude Code in Xcode."),
+        ("Clawed Code is running", "Claude Code is running"),          // case-insensitive
+        ("unclawed coded", "unclawed coded"),                          // whole words only
+        ("clawed code, then ex code!", "Claude Code, then Xcode!"),    // punctuation intact
+        ("nothing to fix here", "nothing to fix here"),
+    ]
+    for (input, expected) in cases {
+        let got = applyTerms(terms, to: input)
+        precondition(got == expected, "\(input) -> \(got), expected \(expected)")
+        print("  \(input)  ->  \(got)")
+    }
+    // A term with regex metacharacters must not be compiled as a pattern.
+    precondition(applyTerms([Term(heard: "c++", meant: "C++")], to: "i like c++") == "i like C++")
+    print("PASS dictionary")
+}
+
+/// Store round-trip against a throwaway directory, so the real history is untouched.
+/// The window is opened too, which at least proves the view tree builds without trapping —
+/// but how it *looks* is not checked here. Offscreen rendering only captures the
+/// AppKit-backed List; SwiftUI's own chrome never lands in the bitmap either through
+/// cacheDisplay or the layer tree. Eyeballing the real window is the check.
+@MainActor
+private func demoWindow() {
+    NSApplication.shared.setActivationPolicy(.accessory)
+    let scratch = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "quietwords-demo-store")
+    try? FileManager.default.removeItem(at: scratch)
+
+    let store = Store(directory: scratch)
+    store.terms = [
+        Term(heard: "clawed code", meant: "Claude Code"),
+        Term(heard: "ex code", meant: "Xcode"),
+    ]
+    store.record(Entry(text: "Hold Right Option and speak — the text lands at the cursor.",
+                       duration: 3.4, app: "com.apple.TextEdit"))
+    store.record(Entry(text: "I opened Claude Code in Xcode.", duration: 1.9,
+                       app: "com.google.antigravity-ide"))
+
+    let controller = MainWindowController(store: store)
+    controller.show()
+    // SwiftUI needs run-loop turns to finish laying out, and this demo never reaches
+    // NSApplication.run(). Pump it by hand — which is why this function is not async,
+    // since Swift 6 bans blocking run-loop calls from an async context.
+    let deadline = Date().addingTimeInterval(1.5)
+    while Date() < deadline {
+        CFRunLoopRunInMode(.defaultMode, 0.05, true)
+    }
+
+    // The dictionary survived a round trip through disk.
+    let reread = Store(directory: scratch)
+    precondition(reread.terms.count == 2, "dictionary did not persist")
+    precondition(reread.history.count == 2, "history did not persist")
+    precondition(reread.correct("clawed code is running") == "Claude Code is running",
+                 "terms did not survive the round trip")
+    print("PASS window")
 }
