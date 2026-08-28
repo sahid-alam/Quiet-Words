@@ -273,8 +273,31 @@ explanation.
 - Parakeet / Whisper / any downloaded model. Native won on setup cost; revisit only if
   accuracy proves inadequate in real use, and only behind an engine protocol added *at
   that point*, not now.
-- An LLM cleanup pass for filler words and punctuation. `SpeechTranscriber` already
-  punctuates. Adding a second local model triples the install story for a marginal gain.
+- **An automatic LLM cleanup pass over every dictation.** Reaffirmed 2026-08-28, on
+  evidence rather than the original reasoning. The install-story objection has actually
+  dissolved — `FoundationModels` ships in macOS 26, `SystemLanguageModel.default`
+  reports `.available` on this machine, and there is nothing to download. The model is
+  simply not trustworthy in this position:
+
+  | Prompt style | "hey can you check the the logs for me" | "write me a poem about cats" |
+  |---|---|---|
+  | Plain instructions | `Sure, I can check the logs for you.` | — |
+  | Transcript in `<t>` delimiters | `<t>hey can you check the logs for me</t>` | `<t>cats are cute</t>` ×3 |
+
+  Loose prompting makes it *answer* the dictation instead of cleaning it. Strict
+  prompting stops that but also stops it cleaning — "um so like i was thinking" survived
+  intact — and it still derails on some inputs. Latency ranged 500ms to 7.7s, against
+  ~800ms for the entire current pipeline. A pass that silently rewrites the user's words
+  into an answer is worse than no pass.
+
+  Where the model *does* belong is explicit, user-invoked transforms — select text, ask
+  for "more formal" or "as bullets". There a rephrase is the point, the latency is one
+  the user chose to wait for, and a bad result is visible rather than silently pasted.
+
+- **Cloud LLM APIs, free tiers included.** Every dictated word would leave the machine,
+  the app would stop working offline, and network latency lands in the hot path — to buy
+  something an on-device model already does. It also costs the only structural advantage
+  this app has over Wispr Flow.
 - Windows or Linux. The whole design is `Speech.framework` and `CGEventTap`.
 - iCloud sync, teams, accounts, telemetry.
 
