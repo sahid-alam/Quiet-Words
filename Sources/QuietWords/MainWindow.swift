@@ -53,8 +53,29 @@ private struct MainView: View {
 
 private struct SettingsTab: View {
     @Bindable var settings: Settings
-    @State private var locales: [Locale] = []
+    @State private var catalog: [Language] = []
+    @State private var downloading: [String: Double] = [:]
+    @State private var failure: String?
     @State private var current: AudioInput?
+
+    /// Anything not installed, minus what SpeechTranscriber ships with anyway.
+    private var downloadable: [Language] { catalog.filter { !$0.installed } }
+
+    private func download(_ language: Language) {
+        failure = nil
+        downloading[language.id] = 0
+        Task {
+            do {
+                try await Languages.install(language) { fraction in
+                    Task { @MainActor in downloading[language.id] = fraction }
+                }
+                catalog = await Languages.catalog()
+            } catch {
+                failure = "\(language.name): \(error.localizedDescription)"
+            }
+            downloading[language.id] = nil
+        }
+    }
 
     var body: some View {
         Form {
@@ -107,10 +128,34 @@ private struct SettingsTab: View {
                 Toggle("Double-tap to latch hands-free", isOn: $settings.handsFree)
                 Picker("Language", selection: $settings.localeIdentifier) {
                     Text("Follow System").tag("")
-                    ForEach(locales, id: \.identifier) { locale in
-                        Text(locale.localizedString(forIdentifier: locale.identifier) ?? locale.identifier)
-                            .tag(locale.identifier)
+                    ForEach(catalog.filter(\.installed)) { language in
+                        Text(language.name).tag(language.locale.identifier)
                     }
+                }
+                Toggle("Hinglish assist", isOn: $settings.hinglishAssist)
+                Text("Biases an English model toward romanized Hindi — yaar, matlab, theek hai. There is no Hinglish model and no code-switching in the framework, so this is a nudge, not a second language. Pair it with English (India). For Hindi in Devanagari, pick Hindi below.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Add a language") {
+                if downloadable.isEmpty {
+                    Text("Everything available is installed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(downloadable) { language in
+                    HStack {
+                        Text(language.name)
+                        Spacer()
+                        if let progress = downloading[language.id] {
+                            ProgressView(value: progress).frame(width: 90)
+                        } else {
+                            Button("Download") { download(language) }
+                        }
+                    }
+                }
+                if let failure {
+                    Text(failure).font(.caption).foregroundStyle(.red)
                 }
             }
 
@@ -127,8 +172,7 @@ private struct SettingsTab: View {
         .formStyle(.grouped)
         .task {
             current = AudioDevices.systemDefault()
-            locales = await SpeechTranscriber.installedLocales
-                .sorted { $0.identifier < $1.identifier }
+            catalog = await Languages.catalog()
         }
     }
 

@@ -239,6 +239,35 @@ an explicit `AVCaptureDevice` and can genuinely record from a device that is not
 system default. That is a rewrite of the core capture path and wants a person present to
 test latency and dropouts, so it is not done yet.
 
+### Languages, and the Hinglish problem
+
+`SpeechTranscriber` does 30 locales and no Hindi. `DictationTranscriber` does 54,
+including `hi_IN`. So the app carries both and picks per language, preferring
+`SpeechTranscriber` where either can do it. This is the engine abstraction the scope note
+below said to add "at that point" — locale coverage proving inadequate is that point, so
+it is the condition being met rather than the decision being overruled.
+
+**There is no Hinglish, and no code-switching at any price.** `selectedLocales` is
+read-only and neither module has an initialiser taking an array of locales, so nothing
+transcribes two languages in one utterance. What exists:
+
+- `en_IN` plus a romanized-Hindi `contextualStrings` pack (`hinglishAssist`). Nudges the
+  model toward *yaar*, *matlab*, *theek hai* instead of the English words they sound like.
+  A nudge, not a second language.
+- `hi_IN` via `DictationTranscriber` for Hindi proper, which returns Devanagari.
+- Transliterating Devanagari back to Latin is possible natively
+  (`StringTransform("Devanagari-Latin")`) but produces `bha'i, ye koda kama nahim` — which
+  is nobody's Hinglish. Not shipped.
+
+How good `hinglishAssist` actually is needs a person speaking Hinglish into it. Same
+reason as the `AVCaptureSession` rewrite: no check here can tell a good transcript from a
+plausible-looking bad one.
+
+Downloading a language is minutes of work — `hi_IN` ran past fifteen. So `make()` never
+downloads: it fails fast with `.notInstalled` and downloading is an explicit action in
+Settings with progress. Putting it on the hotkey path would hang the HUD with no
+explanation.
+
 ### Explicitly out of scope
 
 - Parakeet / Whisper / any downloaded model. Native won on setup cost; revisit only if

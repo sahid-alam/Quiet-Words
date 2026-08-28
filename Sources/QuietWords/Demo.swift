@@ -18,6 +18,7 @@ func runDemo(_ name: String) async {
     case "window": await demoWindow()
     case "login": await demoLogin()
     case "devices": demoDevices()
+    case "languages": await demoLanguages()
     default: print("unknown demo '\(name)'"); exit(2)
     }
 }
@@ -285,4 +286,36 @@ private func demoDevices() {
         precondition(!wired.isBluetooth, "the suggested input is itself Bluetooth")
     }
     print("PASS devices")
+}
+
+/// What the two modules actually cover, and that resolution survives the identifier
+/// mismatch that `en_US` / `en-US` / `en_US@rg=inzzzz` creates.
+private func demoLanguages() async {
+    let catalog = await Languages.catalog()
+    let installed = catalog.filter(\.installed)
+    print("catalog=\(catalog.count) installed=\(installed.count)")
+    for language in installed { print("  \(language.locale.identifier)  \(language.kind.rawValue)  \(language.name)") }
+
+    precondition(catalog.count >= 54, "expected at least DictationTranscriber's 54 locales, got \(catalog.count)")
+    precondition(!installed.isEmpty, "no language installed at all")
+
+    // SpeechTranscriber wins where both modules can do a locale.
+    let english = catalog.first { $0.locale.identifier == "en_US" }
+    precondition(english?.kind == .speech, "en_US should route to SpeechTranscriber")
+    // Hindi exists only on DictationTranscriber — the whole reason for two engines.
+    let hindi = catalog.first { $0.locale.identifier == "hi_IN" }
+    precondition(hindi != nil, "hi_IN missing from the catalog")
+    precondition(hindi?.kind == .dictation, "hi_IN should route to DictationTranscriber")
+
+    // The identifiers the app actually passes around, all of which must resolve.
+    for identifier in ["en-US", "en_US", "en_US@rg=inzzzz", "en-IN"] {
+        let resolved = await Languages.resolve(Locale(identifier: identifier))
+        precondition(resolved != nil, "\(identifier) did not resolve")
+        print("  \(identifier) -> \(resolved!.locale.identifier) via \(resolved!.kind.rawValue)")
+    }
+    let nonsense = await Languages.resolve(Locale(identifier: "xx-XX"))
+    precondition(nonsense == nil, "a nonsense locale resolved to something")
+
+    precondition(!hinglishBias.isEmpty && hinglishBias.contains("yaar"))
+    print("PASS languages")
 }

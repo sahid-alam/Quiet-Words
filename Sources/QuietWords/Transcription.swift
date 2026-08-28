@@ -4,10 +4,28 @@ import os
 
 private let logger = Logger(subsystem: "com.sahidalam.quietwords", category: "speech")
 
-enum TranscriptionError: Error {
+enum TranscriptionError: Error, LocalizedError {
     case localeUnsupported(Locale)
+    case notInstalled(Language)
     case noCompatibleFormat
+
+    var errorDescription: String? {
+        switch self {
+        case .localeUnsupported(let locale): "No model for \(locale.identifier)."
+        case .notInstalled(let language): "\(language.name) is not downloaded yet."
+        case .noCompatibleFormat: "No compatible audio format."
+        }
+    }
 }
+
+/// Both modules' results carry the same two things, but through separate types that share
+/// no protocol exposing `text`. One extension each beats writing the consume loop twice.
+protocol TranscriptResult {
+    var text: AttributedString { get }
+    var isFinal: Bool { get }
+}
+extension SpeechTranscriber.Result: TranscriptResult {}
+extension DictationTranscriber.Result: TranscriptResult {}
 
 /// One `SpeechAnalyzer` + `SpeechTranscriber` pair, fed by an `AnalyzerInput` stream.
 /// Live-ish enough for push-to-talk: volatile results drive the HUD, finals accumulate.
@@ -18,29 +36,39 @@ final class TranscriptionSession {
     /// The format the caller must convert its audio to. Feeding anything else is silent.
     let format: AVAudioFormat
 
-    private let transcriber: SpeechTranscriber
+    /// Which language this session was built for.
+    let language: Language
+
+    private let engine: Engine
     private let analyzer: SpeechAnalyzer
     private var results: Task<String, Never>?
 
-    private init(transcriber: SpeechTranscriber, format: AVAudioFormat) {
-        self.transcriber = transcriber
+    private init(engine: Engine, language: Language, format: AVAudioFormat) {
+        self.engine = engine
+        self.language = language
         self.format = format
-        self.analyzer = SpeechAnalyzer(modules: [transcriber])
+        self.analyzer = SpeechAnalyzer(modules: [engine.module])
     }
 
-    /// Resolves assets and warms the analyzer. Do this once at launch, not on the hotkey.
+    /// Warms the analyzer. Never downloads: a first download of a language runs for
+    /// minutes, and doing it here means the hotkey hangs with the HUD up and nothing to
+    /// look at. Downloading is `Languages.install`, driven from Settings.
     static func make(locale: Locale = .current) async throws -> TranscriptionSession {
-        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-        try await installAssets(for: transcriber, locale: locale)
+        guard let language = await Languages.resolve(locale) else {
+            throw TranscriptionError.localeUnsupported(locale)
+        }
+        guard language.installed else { throw TranscriptionError.notInstalled(language) }
+        try await Languages.reserve(language.locale)
 
+        let engine = Engine.make(language.locale, kind: language.kind)
         // Let the framework pick. availableCompatibleAudioFormats is unordered and also
         // offers 8kHz, so taking .first there quietly costs accuracy.
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
-            throw TranscriptionError.noCompatibleFormat
-        }
-        let session = TranscriptionSession(transcriber: transcriber, format: format)
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [engine.module])
+        else { throw TranscriptionError.noCompatibleFormat }
+
+        let session = TranscriptionSession(engine: engine, language: language, format: format)
         try await session.analyzer.prepareToAnalyze(in: format)
-        logger.log("session ready locale=\(locale.identifier, privacy: .public) format=\(format, privacy: .public)")
+        logger.log("session ready \(language.locale.identifier, privacy: .public) via \(language.kind.rawValue, privacy: .public) format=\(format, privacy: .public)")
         return session
     }
 
@@ -62,24 +90,35 @@ final class TranscriptionSession {
         inputs: some AsyncSequence<AnalyzerInput, Never> & Sendable,
         onVolatile: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws {
-        let stream = transcriber.results
-        results = Task {
-            var final = AttributedString()
-            do {
-                for try await result in stream {
-                    if result.isFinal {
-                        final += result.text
-                        onVolatile("")
-                    } else {
-                        onVolatile(String(result.text.characters))
-                    }
-                }
-            } catch {
-                logger.error("results ended: \(error.localizedDescription, privacy: .public)")
-            }
-            return String(final.characters)
+        switch engine {
+        case .speech(let module):
+            let stream = module.results
+            results = Task { await Self.consume(stream, onVolatile: onVolatile) }
+        case .dictation(let module):
+            let stream = module.results
+            results = Task { await Self.consume(stream, onVolatile: onVolatile) }
         }
         try await analyzer.start(inputSequence: inputs)
+    }
+
+    private static func consume<Results: AsyncSequence & Sendable>(
+        _ stream: Results,
+        onVolatile: @escaping @Sendable (String) -> Void
+    ) async -> String where Results.Element: TranscriptResult {
+        var final = AttributedString()
+        do {
+            for try await result in stream {
+                if result.isFinal {
+                    final += result.text
+                    onVolatile("")
+                } else {
+                    onVolatile(String(result.text.characters))
+                }
+            }
+        } catch {
+            logger.error("results ended: \(error.localizedDescription, privacy: .public)")
+        }
+        return String(final.characters)
     }
 
     /// Drains what is still in flight and returns the committed transcript.
@@ -103,22 +142,6 @@ final class TranscriptionSession {
     }
 }
 
-/// The gate is reservation, not download — a locale already in `installedLocales` costs
-/// one `reserve` call and downloads nothing. Reservations persist across launches.
-private func installAssets(for transcriber: SpeechTranscriber, locale: Locale) async throws {
-    let status = await AssetInventory.status(forModules: [transcriber])
-    logger.log("asset status \(String(describing: status), privacy: .public)")
-    guard status != .installed else { return }
-    if status == .unsupported { throw TranscriptionError.localeUnsupported(locale) }
-
-    _ = try await AssetInventory.reserve(locale: locale)
-    if await AssetInventory.status(forModules: [transcriber]) == .installed { return }
-
-    if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-        logger.log("downloading assets for \(locale.identifier, privacy: .public)")
-        try await request.downloadAndInstall()
-    }
-}
 
 
 /// Runs a recorded WAV back through the same analyzer path the hotkey uses. Retrying a

@@ -70,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // steals focus can't quietly retarget the injection.
             target = NSWorkspace.shared.frontmostApplication
             dictation.contextualStrings = store.contextualStrings
+                + (settings.hinglishAssist ? hinglishBias : [])
             hud.show()
             dictation.begin()
             settings.play(.start)

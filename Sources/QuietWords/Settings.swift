@@ -59,6 +59,8 @@ final class Settings {
     var ceilingMinutes = 20 { didSet { save(); onChange() } }
     var stripFillers = true { didSet { save() } }
     var stripDiscourseMarkers = false { didSet { save() } }
+    /// Bias the model toward romanized Hindi. See `hinglishBias`.
+    var hinglishAssist = false { didSet { save() } }
     /// These three cannot be applied in place — the tap and the warm transcription
     /// session are both built from them, so the app rebuilds when they change.
     var handsFree = true { didSet { save(); onChange() } }
@@ -85,6 +87,7 @@ final class Settings {
             ceilingMinutes = saved.ceilingMinutes
             stripFillers = saved.stripFillers
             stripDiscourseMarkers = saved.stripDiscourseMarkers
+            hinglishAssist = saved.hinglishAssist
             handsFree = saved.handsFree
             hotkeyCode = saved.hotkeyCode
             localeIdentifier = saved.localeIdentifier
@@ -136,6 +139,7 @@ final class Settings {
         var ceilingMinutes = 20
         var stripFillers = true
         var stripDiscourseMarkers = false
+        var hinglishAssist = false
         var handsFree = true
         var hotkeyCode = HotkeyChoice.default.keyCode
         var localeIdentifier = ""
@@ -148,7 +152,8 @@ final class Settings {
         writeJSON(Saved(soundCues: soundCues, saveAudio: saveAudio,
                         audioRetentionDays: audioRetentionDays, ceilingMinutes: ceilingMinutes,
                         stripFillers: stripFillers,
-                        stripDiscourseMarkers: stripDiscourseMarkers, handsFree: handsFree,
+                        stripDiscourseMarkers: stripDiscourseMarkers,
+                        hinglishAssist: hinglishAssist, handsFree: handsFree,
                         hotkeyCode: hotkeyCode, localeIdentifier: localeIdentifier),
                   to: file)
     }
