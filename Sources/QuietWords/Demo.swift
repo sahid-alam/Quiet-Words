@@ -13,6 +13,7 @@ func runDemo(_ name: String) async {
     case "hud": await demoHUD()
     case "dictionary": demoDictionary()
     case "window": await demoWindow()
+    case "login": await demoLogin()
     default: print("unknown demo '\(name)'"); exit(2)
     }
 }
@@ -178,6 +179,21 @@ private func demoDictionary() {
     }
     // A term with regex metacharacters must not be compiled as a pattern.
     precondition(applyTerms([Term(heard: "c++", meant: "C++")], to: "i like c++") == "i like C++")
+
+    let fillerCases: [(String, String)] = [
+        ("Um, hello there", "Hello there"),                    // leading filler, case restored
+        ("So, uh, I think so", "So, I think so"),              // mid-sentence, comma cleaned
+        ("write code like this", "write code like this"),      // 'like' is not in the safe list
+        ("hmm let me see", "let me see"),   // no leading capital to restore
+        ("nothing to strip", "nothing to strip"),
+    ]
+    for (input, expected) in fillerCases {
+        let got = removeFillers(from: input, words: fillerWords)
+        precondition(got == expected, "\(input) -> \(got), expected \(expected)")
+        print("  \(input)  ->  \(got)")
+    }
+    // The aggressive list does strip 'like' — which is why it is off by default.
+    precondition(removeFillers(from: "write code like this", words: discourseMarkers) == "write code this")
     print("PASS dictionary")
 }
 
@@ -202,7 +218,8 @@ private func demoWindow() {
     store.record(Entry(text: "I opened Claude Code in Xcode.", duration: 1.9,
                        app: "com.google.antigravity-ide"))
 
-    let controller = MainWindowController(store: store)
+    let scratchSettings = Settings(directory: scratch)
+    let controller = MainWindowController(store: store, settings: scratchSettings)
     controller.show()
     // SwiftUI needs run-loop turns to finish laying out, and this demo never reaches
     // NSApplication.run(). Pump it by hand — which is why this function is not async,
@@ -218,5 +235,43 @@ private func demoWindow() {
     precondition(reread.history.count == 2, "history did not persist")
     precondition(reread.correct("clawed code is running") == "Claude Code is running",
                  "terms did not survive the round trip")
+    // Stats over a known history — `now` is injected so the streak needs no waiting.
+    let calendar = Calendar(identifier: .gregorian)
+    let now = calendar.startOfDay(for: Date()).addingTimeInterval(12 * 3600)
+    func daysAgo(_ n: Int) -> Date { calendar.date(byAdding: .day, value: -n, to: now)! }
+    let seeded = [
+        Entry(text: "one two three four five six", date: now, duration: 60),
+        Entry(text: "seven eight", date: daysAgo(1), duration: 60),
+        Entry(text: "nine", date: daysAgo(2), duration: 60),
+        Entry(text: "ten", date: daysAgo(9), duration: 60),   // breaks the streak
+    ]
+    let summary = stats(for: seeded, now: now, calendar: calendar)
+    precondition(summary.words == 10, "counted \(summary.words) words")
+    precondition(summary.minutes == 4, "counted \(summary.minutes) minutes")
+    precondition(summary.wordsPerMinute == 3, "wpm was \(summary.wordsPerMinute)")
+    precondition(summary.streak == 3, "streak was \(summary.streak)")
+    // Nothing today, something yesterday — the streak still stands.
+    precondition(stats(for: [Entry(text: "hi", date: daysAgo(1), duration: 1)],
+                       now: now, calendar: calendar).streak == 1)
+    // Nothing for two days — broken.
+    precondition(stats(for: [Entry(text: "hi", date: daysAgo(2), duration: 1)],
+                       now: now, calendar: calendar).streak == 0)
     print("PASS window")
+}
+
+/// Registering a login item is the one Phase 7 piece that can fail while the toggle
+/// claims success, so the check reads the status back rather than trusting the call.
+/// Leaves the machine as it found it.
+@MainActor
+private func demoLogin() {
+    let settings = Settings(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+        .appending(path: "quietwords-demo-settings"))
+    let before = settings.loginItemStatus
+    settings.setLoginItem(true)
+    let after = settings.loginItemStatus
+    print("login item: before=\(before.rawValue) afterRegister=\(after.rawValue)")
+    print("  0=notRegistered 1=enabled 2=requiresApproval 3=notFound")
+    if before != .enabled { settings.setLoginItem(false) }   // leave it as we found it
+    precondition(after != before || after == .enabled, "register() changed nothing at all")
+    print("PASS login")
 }

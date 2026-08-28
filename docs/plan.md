@@ -204,9 +204,16 @@ from a shell inherits the terminal's TCC identity and `CGEvent.post` silently no
 
 ### Phase 7 — Polish (optional, only if used daily)
 
-- Launch at login (`SMAppService.mainApp.register()`).
-- Sound cues on start/stop.
-- Per-app behaviour overrides (e.g. always paste in Terminal).
+- **Launch at login** — done. `SMAppService.mainApp.register()` works even from `build/`
+  with the self-signed identity: status goes `.notFound` → `.enabled` and back on
+  unregister, verified by `--demo login`. The registration points at wherever the bundle
+  sat when it was made, so moving the app to `/Applications` means toggling it again.
+- **Sound cues** — done. Tink on start, Pop on finish, Basso on cancel, at 0.25 volume,
+  behind a setting.
+- **Per-app behaviour overrides — dropped, not deferred.** The plan's own example was
+  "always paste in Terminal", but paste is the only injection path there is; the AX route
+  was never built because it silently no-ops in Electron. An override needs two behaviours
+  to choose between, and there is one. Revisit only if the AX path ever lands.
 - Visual identity. The video's design brief — 1980s tape recorder, explicitly not
   synthwave neon — is a good brief. Worth doing once the thing is used every day.
 

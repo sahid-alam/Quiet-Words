@@ -1,4 +1,6 @@
 import AppKit
+import ServiceManagement
+import Speech
 import SwiftUI
 
 /// History and dictionary. Opened from the menu bar — the app has no Dock icon, so this
@@ -6,9 +8,13 @@ import SwiftUI
 @MainActor
 final class MainWindowController {
     private let store: Store
+    private let settings: Settings
     private var window: NSWindow?
 
-    init(store: Store) { self.store = store }
+    init(store: Store, settings: Settings) {
+        self.store = store
+        self.settings = settings
+    }
 
     func show() {
         if window == nil {
@@ -18,7 +24,7 @@ final class MainWindowController {
                 backing: .buffered,
                 defer: false)
             window.title = "Quiet Words"
-            window.contentView = NSHostingView(rootView: MainView(store: store))
+            window.contentView = NSHostingView(rootView: MainView(store: store, settings: settings))
             window.isReleasedWhenClosed = false   // reopened from the menu, not rebuilt
             window.center()
             self.window = window
@@ -32,14 +38,77 @@ final class MainWindowController {
 
 private struct MainView: View {
     @Bindable var store: Store
+    @Bindable var settings: Settings
 
     var body: some View {
         TabView {
             HistoryTab(store: store).tabItem { Label("History", systemImage: "clock") }
             DictionaryTab(store: store).tabItem { Label("Dictionary", systemImage: "character.book.closed") }
+            SettingsTab(settings: settings).tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .padding(12)
-        .frame(minWidth: 560, minHeight: 360)
+        .frame(minWidth: 600, minHeight: 400)
+    }
+}
+
+private struct SettingsTab: View {
+    @Bindable var settings: Settings
+    @State private var locales: [Locale] = []
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Launch at login", isOn: Binding(
+                    get: { settings.loginItemStatus == .enabled },
+                    set: { settings.setLoginItem($0) }))
+                if settings.loginItemStatus != .enabled && settings.loginItemStatus != .notRegistered {
+                    Text(loginItemNote)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Toggle("Sound cues", isOn: $settings.soundCues)
+            }
+
+            Section("Dictation") {
+                Picker("Hold to dictate", selection: $settings.hotkeyCode) {
+                    ForEach(HotkeyChoice.all) { choice in
+                        Text(choice.name).tag(choice.keyCode)
+                    }
+                }
+                Toggle("Double-tap to latch hands-free", isOn: $settings.handsFree)
+                Picker("Language", selection: $settings.localeIdentifier) {
+                    Text("Follow System").tag("")
+                    ForEach(locales, id: \.identifier) { locale in
+                        Text(locale.localizedString(forIdentifier: locale.identifier) ?? locale.identifier)
+                            .tag(locale.identifier)
+                    }
+                }
+            }
+
+            Section("Clean-up") {
+                Toggle("Remove filler words", isOn: $settings.stripFillers)
+                Text(fillerWords.joined(separator: ", "))
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Also remove hedges", isOn: $settings.stripDiscourseMarkers)
+                Text("\(discourseMarkers.joined(separator: ", ")) — these carry meaning in ordinary speech, so this is off by default.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+        .task {
+            locales = await SpeechTranscriber.installedLocales
+                .sorted { $0.identifier < $1.identifier }
+        }
+    }
+
+    /// Registration fails for an app outside /Applications, and the toggle must not
+    /// claim otherwise.
+    private var loginItemNote: String {
+        switch settings.loginItemStatus {
+        case .requiresApproval: "Approve Quiet Words in System Settings → General → Login Items."
+        default: "macOS refused the login item. This usually means the app is not in /Applications."
+        }
     }
 }
 
@@ -59,6 +128,14 @@ private struct HistoryTab: View {
                                        systemImage: "mic",
                                        description: Text("Hold Right Option and speak."))
             } else {
+                let summary = stats(for: store.history)
+                HStack(spacing: 18) {
+                    stat("\(summary.words)", "words")
+                    stat("\(summary.wordsPerMinute)", "wpm")
+                    stat("\(summary.streak)", summary.streak == 1 ? "day streak" : "day streak")
+                    Spacer()
+                }
+
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     // ponytail: a plain field, not .searchable — that modifier needs a
@@ -98,6 +175,13 @@ private struct HistoryTab: View {
         }
     }
 
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value).font(.title2).monospacedDigit()
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private func caption(for entry: Entry) -> String {
         let when = entry.date.formatted(date: .abbreviated, time: .shortened)
         let held = String(format: "%.1fs", entry.duration)
@@ -111,7 +195,7 @@ private struct DictionaryTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("What you hear on the left, what you meant on the right. Terms on the right are also fed to the transcriber up front, so most of them stop needing correction.")
+            Text("What you hear on the left, what you meant on the right. Terms on the right are also fed to the transcriber up front, so most of them stop needing correction. Longer replacements work too — \"my email\" can expand to the whole address.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -18,6 +18,11 @@ final class Dictation {
     /// Dictionary terms to bias the model toward. Read fresh at each key-down.
     var contextualStrings: [String] = []
 
+    /// Which locale the warm session is built for. Changing it re-warms.
+    var locale: Locale = .current {
+        didSet { if locale != oldValue { warmUp() } }
+    }
+
     private let capture = AudioCapture()
     private var warm: Task<TranscriptionSession, Error>?
     private var active: TranscriptionSession?
@@ -44,7 +49,8 @@ final class Dictation {
     }
 
     private func warmUp() {
-        warm = Task { try await TranscriptionSession.make() }
+        let locale = locale
+        warm = Task { try await TranscriptionSession.make(locale: locale) }
     }
 
     private func open() async {

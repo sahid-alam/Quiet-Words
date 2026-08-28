@@ -15,18 +15,33 @@ final class Hotkey {
         case cancel
     }
 
-    /// Right Option. A deliberate deviation from Fn, which is already bound to the emoji
-    /// picker or system dictation on most keyboards.
-    let keyCode = Int64(kVK_RightOption)
+    /// A release shorter than this arms a double-tap; a second press inside
+    /// `doubleTapGap` latches hands-free instead of starting another hold.
+    private static let tapMax: TimeInterval = 0.25
+    private static let doubleTapGap: TimeInterval = 0.35
 
+    private enum State {
+        case idle
+        case holding(since: Date)
+        case handsFree(since: Date)
+    }
+
+    private let choice: HotkeyChoice
+    private let handsFreeEnabled: Bool
     private let handler: (Signal) -> Void
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
-    private var downAt: Date?
+    private var state = State.idle
+    private var lastReleaseAt: Date?
 
-    var isHeld: Bool { downAt != nil }
+    var isActive: Bool {
+        if case .idle = state { return false }
+        return true
+    }
 
-    init?(handler: @escaping (Signal) -> Void) {
+    init?(choice: HotkeyChoice, handsFree: Bool, handler: @escaping (Signal) -> Void) {
+        self.choice = choice
+        self.handsFreeEnabled = handsFree
         self.handler = handler
 
         let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
@@ -56,7 +71,7 @@ final class Hotkey {
         CGEvent.tapEnable(tap: tap, enable: true)
         self.tap = tap
         self.source = source
-        logger.log("tap installed keyCode=\(self.keyCode, privacy: .public)")
+        logger.log("tap installed key=\(choice.name, privacy: .public) code=\(choice.keyCode, privacy: .public) handsFree=\(handsFree, privacy: .public)")
     }
 
     isolated deinit {
@@ -75,30 +90,57 @@ final class Hotkey {
 
         let code = event.getIntegerValueField(.keyboardEventKeycode)
 
-        if type == .keyDown, code == Int64(kVK_Escape), downAt != nil {
-            downAt = nil
+        if type == .keyDown, code == Int64(kVK_Escape), isActive {
+            state = .idle
+            lastReleaseAt = nil
             handler(.cancel)
             return false   // swallow the Escape that cancelled us
         }
 
-        if type == .flagsChanged, code == keyCode {
-            // .maskAlternate cannot tell left from right; the keycode already did.
-            if event.flags.contains(.maskAlternate) {
-                if downAt == nil {
-                    downAt = Date()
-                    logger.log("hotkey.down")
-                    handler(.down)
-                }
-            } else if let start = downAt {
-                downAt = nil
-                let held = Date().timeIntervalSince(start)
-                logger.log("hotkey.up held=\(String(format: "%.2f", held), privacy: .public)s")
-                handler(.up(held: held))
-            }
+        if type == .flagsChanged, code == choice.keyCode {
+            // The flag mask cannot tell left from right; the key code already did.
+            event.flags.contains(choice.flag) ? pressed() : released()
         }
 
         // Everything passes through. Right Option types special characters on many
         // layouts; swallowing it would break ordinary typing.
         return true
+    }
+
+    private func pressed() {
+        switch state {
+        case .handsFree(let since):
+            // The press that ends a latched session. Its release is ignored below.
+            state = .idle
+            lastReleaseAt = nil
+            let held = Date().timeIntervalSince(since)
+            logger.log("hotkey.handsFree.stop held=\(String(format: "%.2f", held), privacy: .public)s")
+            handler(.up(held: held))
+
+        case .idle, .holding:
+            let armed = handsFreeEnabled
+                && lastReleaseAt.map { Date().timeIntervalSince($0) < Self.doubleTapGap } == true
+            lastReleaseAt = nil
+            if armed {
+                state = .handsFree(since: Date())
+                logger.log("hotkey.handsFree.start")
+            } else {
+                state = .holding(since: Date())
+                logger.log("hotkey.down")
+            }
+            handler(.down)
+        }
+    }
+
+    private func released() {
+        // A release in .handsFree is the second tap of the double-tap letting go, and a
+        // release in .idle is the tap that just ended a latched session. Neither is an end
+        // of dictation — emitting .up for them would close a capture that never opened.
+        guard case .holding(let since) = state else { return }
+        state = .idle
+        let held = Date().timeIntervalSince(since)
+        lastReleaseAt = held < Self.tapMax ? Date() : nil
+        logger.log("hotkey.up held=\(String(format: "%.2f", held), privacy: .public)s")
+        handler(.up(held: held))
     }
 }

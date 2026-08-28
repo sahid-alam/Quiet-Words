@@ -14,7 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let dictation = Dictation()
     private let hud = HUD()
     private let store = Store()
-    private lazy var mainWindow = MainWindowController(store: store)
+    private let settings = Settings()
+    private lazy var mainWindow = MainWindowController(store: store, settings: settings)
     private var lastHold: TimeInterval = 0
     /// Whoever was frontmost at key-down owns the text, even if focus moves while talking.
     private var target: NSRunningApplication?
@@ -38,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         dictation.onTranscript = { [weak self] text in
             guard let self else { return }
-            let corrected = store.correct(text)
+            let corrected = settings.polish(store.correct(text))
             log.log("dictated: \(corrected, privacy: .public)")
             let entry = Entry(text: corrected, duration: lastHold,
                               app: target?.bundleIdentifier)
@@ -50,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.store.record(entry)
             }
         }
+        dictation.locale = settings.locale
+        settings.onChange = { [weak self] in self?.applySettings() }
         installHotkey()
         buildStatusItem()
     }
@@ -63,30 +66,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dictation.contextualStrings = store.contextualStrings
             hud.show()
             dictation.begin()
+            settings.play(.start)
         case .up(let held):
             lastHold = held
             hud.hide()
-            held < Self.minimumHold ? dictation.cancel() : dictation.end()
+            if held < Self.minimumHold {
+                dictation.cancel()
+                settings.play(.cancel)
+            } else {
+                dictation.end()
+                settings.play(.stop)
+            }
         case .cancel:
             hud.hide()
             dictation.cancel()
+            settings.play(.cancel)
         }
     }
 
     /// The grant can land at any moment and the tap cannot exist before it does. Poll,
     /// so granting takes effect without a relaunch — otherwise it looks like a bug.
     private func installHotkey() {
-        hotkey = Hotkey { [weak self] in self?.handle($0) }
+        hotkey = makeHotkey()
         guard hotkey == nil else { return }
         Task { @MainActor in
             while hotkey == nil {
                 try? await Task.sleep(for: .seconds(2))
                 // Retry tapCreate itself rather than gating on AXIsProcessTrusted(), which
                 // a long-running process can serve from a cache and never see the grant.
-                hotkey = Hotkey { [weak self] in self?.handle($0) }
+                hotkey = makeHotkey()
             }
             statusItem?.menu = buildMenu()
         }
+    }
+
+    private func makeHotkey() -> Hotkey? {
+        Hotkey(choice: settings.hotkey, handsFree: settings.handsFree) { [weak self] in
+            self?.handle($0)
+        }
+    }
+
+    /// The tap and the warm session are built from settings, so a change to either has to
+    /// tear down and rebuild rather than being picked up in place.
+    private func applySettings() {
+        dictation.locale = settings.locale
+        hotkey = nil              // release the old tap before installing the new one
+        hotkey = makeHotkey()
+        statusItem?.menu = buildMenu()
     }
 
     private func buildStatusItem() {
@@ -104,7 +130,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             grant.target = self
             menu.addItem(.separator())
         } else {
-            menu.addItem(withTitle: "Hold Right Option to dictate", action: nil, keyEquivalent: "").isEnabled = false
+            let hint = settings.handsFree
+                ? "Hold \(settings.hotkey.name) to dictate, double-tap to latch"
+                : "Hold \(settings.hotkey.name) to dictate"
+            menu.addItem(withTitle: hint, action: nil, keyEquivalent: "").isEnabled = false
             menu.addItem(.separator())
         }
         let history = menu.addItem(withTitle: "History & Dictionary…",
@@ -116,6 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openMainWindow() { mainWindow.show() }
+
+    /// Menu title reads "History & Dictionary…" but the window carries settings too.
 
     @objc private func openAccessibilitySettings() {
         NSWorkspace.shared.open(URL(string:
