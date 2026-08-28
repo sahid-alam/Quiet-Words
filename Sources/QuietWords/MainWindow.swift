@@ -42,7 +42,7 @@ private struct MainView: View {
 
     var body: some View {
         TabView {
-            HistoryTab(store: store).tabItem { Label("History", systemImage: "clock") }
+            HistoryTab(store: store, settings: settings).tabItem { Label("History", systemImage: "clock") }
             DictionaryTab(store: store).tabItem { Label("Dictionary", systemImage: "character.book.closed") }
             SettingsTab(settings: settings).tabItem { Label("Settings", systemImage: "gearshape") }
         }
@@ -54,6 +54,7 @@ private struct MainView: View {
 private struct SettingsTab: View {
     @Bindable var settings: Settings
     @State private var locales: [Locale] = []
+    @State private var current: AudioInput?
 
     var body: some View {
         Form {
@@ -67,6 +68,33 @@ private struct SettingsTab: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Toggle("Sound cues", isOn: $settings.soundCues)
+            }
+
+            Section("Recordings") {
+                Toggle("Keep audio", isOn: $settings.saveAudio)
+                Text("Roughly 2 MB a minute. Without it, History has no playback and no retry.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Stepper("Delete after \(settings.audioRetentionDays) days",
+                        value: $settings.audioRetentionDays, in: 1...90)
+                    .disabled(!settings.saveAudio)
+                Stepper("Stop after \(settings.ceilingMinutes) minutes",
+                        value: $settings.ceilingMinutes, in: 1...60)
+            }
+
+            Section("Microphone") {
+                LabeledContent("Recording from", value: current?.name ?? "system default")
+                if let current, current.isBluetooth {
+                    Text("Quiet Words records from whatever macOS has set as the input. While a Bluetooth headset's microphone is open, macOS drops it into hands-free mode and everything you play through it — music, video, calls — falls to phone-call quality until dictation stops.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let wired = AudioDevices.resolve(preferred: "") {
+                        Button("Switch system input to \(wired.name)") {
+                            AudioDevices.makeSystemDefault(wired)
+                            self.current = AudioDevices.systemDefault()
+                        }
+                    }
+                }
             }
 
             Section("Dictation") {
@@ -97,10 +125,12 @@ private struct SettingsTab: View {
         }
         .formStyle(.grouped)
         .task {
+            current = AudioDevices.systemDefault()
             locales = await SpeechTranscriber.installedLocales
                 .sorted { $0.identifier < $1.identifier }
         }
     }
+
 
     /// Registration fails for an app outside /Applications, and the toggle must not
     /// claim otherwise.
@@ -114,7 +144,10 @@ private struct SettingsTab: View {
 
 private struct HistoryTab: View {
     @Bindable var store: Store
+    @Bindable var settings: Settings
     @State private var search = ""
+    @State private var retrying: Set<UUID> = []
+    @State private var player: NSSound?
 
     private var shown: [Entry] {
         guard !search.isEmpty else { return store.history }
@@ -147,11 +180,38 @@ private struct HistoryTab: View {
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
 
                 List(shown) { entry in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(entry.text)
-                        Text(caption(for: entry))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.text)
+                            Text(caption(for: entry))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        if let audio = store.audioURL(for: entry) {
+                            Button {
+                                player?.stop()
+                                player = NSSound(contentsOf: audio, byReference: true)
+                                player?.play()
+                            } label: {
+                                Image(systemName: "play.circle")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Play the recording")
+
+                            Button {
+                                retry(entry, audio: audio)
+                            } label: {
+                                if retrying.contains(entry.id) {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.clockwise.circle")
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(retrying.contains(entry.id))
+                            .help("Transcribe the recording again")
+                        }
                     }
                     .padding(.vertical, 2)
                     .contextMenu {
@@ -171,6 +231,23 @@ private struct HistoryTab: View {
                     Spacer()
                     Button("Clear All", role: .destructive) { store.clearHistory() }
                 }
+            }
+        }
+    }
+
+    /// Re-runs the saved recording through the analyzer. What the transcriber got wrong
+    /// once it may get right with a dictionary that has grown since.
+    private func retry(_ entry: Entry, audio: URL) {
+        retrying.insert(entry.id)
+        Task {
+            defer { retrying.remove(entry.id) }
+            do {
+                let text = try await transcribe(fileAt: audio, locale: settings.locale,
+                                                bias: store.contextualStrings)
+                guard !text.isEmpty else { return }
+                store.replace(entry, withText: settings.polish(store.correct(text)))
+            } catch {
+                NSSound.beep()
             }
         }
     }

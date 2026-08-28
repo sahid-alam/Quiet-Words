@@ -217,6 +217,28 @@ from a shell inherits the terminal's TCC identity and `CGEvent.post` silently no
 - Visual identity. The video's design brief — 1980s tape recorder, explicitly not
   synthwave neon — is a good brief. Worth doing once the thing is used every day.
 
+### The Bluetooth microphone problem
+
+Found in real use, 2026-08-28. Dictating while wearing Bluetooth earbuds drops their
+output to phone-call quality for the whole machine, because macOS switches the headset
+from A2DP to the hands-free profile the moment anything opens its microphone. Measured on
+a realme Buds Air6 Pro: output goes 2ch/44100 → 1ch/16000 during capture and recovers
+after.
+
+This is not something the app can dodge from inside its own audio graph.
+`AVAudioEngine` ignores `kAudioOutputUnitProperty_CurrentDevice` — see trap 9 in
+CLAUDE.md — so it always opens whatever macOS has as the default input.
+
+What ships: the app reports which microphone it is recording from, warns in the menu bar
+and in Settings when that is a Bluetooth device, and offers a one-click switch of the
+system default input to the built-in microphone. Verified: with the system input on the
+built-in mic, the headset stays at 2ch/44100 throughout a capture.
+
+What would fix it properly: replacing `AVAudioEngine` with `AVCaptureSession`, which takes
+an explicit `AVCaptureDevice` and can genuinely record from a device that is not the
+system default. That is a rewrite of the core capture path and wants a person present to
+test latency and dropouts, so it is not done yet.
+
 ### Explicitly out of scope
 
 - Parakeet / Whisper / any downloaded model. Native won on setup cost; revisit only if

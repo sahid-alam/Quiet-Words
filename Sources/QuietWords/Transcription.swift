@@ -119,3 +119,32 @@ private func installAssets(for transcriber: SpeechTranscriber, locale: Locale) a
         try await request.downloadAndInstall()
     }
 }
+
+
+/// Runs a recorded WAV back through the same analyzer path the hotkey uses. Retrying a
+/// garbled transcript and the Phase 2 check are the same operation.
+@MainActor
+func transcribe(fileAt url: URL, locale: Locale = .current, bias: [String] = []) async throws -> String {
+    let session = try await TranscriptionSession.make(locale: locale)
+    await session.bias(toward: bias)
+
+    let file = try AVAudioFile(forReading: url)
+    guard let converter = AVAudioConverter(from: file.processingFormat, to: session.format) else {
+        throw TranscriptionError.noCompatibleFormat
+    }
+    let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
+    try await session.start(inputs: stream)
+
+    // Bound by framePosition — read(into:) throws at EOF rather than returning 0 frames.
+    while file.framePosition < file.length {
+        let chunk = AVAudioFrameCount(min(4096, file.length - file.framePosition))
+        guard let read = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunk)
+        else { break }
+        try file.read(into: read, frameCount: chunk)
+        if let out = convert(read, with: converter, to: session.format) {
+            cont.yield(AnalyzerInput(buffer: out))
+        }
+    }
+    cont.finish()
+    return await session.finish().trimmingCharacters(in: .whitespacesAndNewlines)
+}

@@ -108,6 +108,21 @@ AnalyzerInput(buffer: AVAudioPCMBuffer, bufferStartTime: CMTime?)
    `framePosition < length`.
 8. **`assert` is compiled out of release builds**, and the app only runs as a release
    bundle. Demo checks use `precondition`.
+9. **`AVAudioEngine` cannot record from a non-default input device.** Setting
+   `kAudioOutputUnitProperty_CurrentDevice` on `inputNode.audioUnit` returns `noErr` and
+   does nothing — the engine still opens the system default. Measured: with the property
+   set to the built-in mic, the Bluetooth headset *still* dropped into hands-free mode,
+   and the tap died after ~0.3s because it was built for the built-in mic's 48kHz while
+   the hardware ran at the headset's 16kHz. Uninitialize/set/initialize does not help.
+   The only reliable options are changing the system default input, or `AVCaptureSession`,
+   which takes an explicit `AVCaptureDevice`. Do not re-attempt the AU property.
+10. **Opening a Bluetooth mic wrecks that headset's output for the whole machine.** macOS
+   switches it from A2DP to the hands-free profile: output goes from 2ch/44.1kHz to
+   1ch/16kHz — "phone speaker" — for as long as the mic is held, and recovers on release.
+   Nothing the app does to its own audio graph avoids this. Verify with
+   `system_profiler SPAudioDataType` during a capture.
+11. **`inputNode.outputFormat(forBus:)` can go stale**; `inputFormat(forBus:)` reports the
+   hardware's real format. Use the latter for the tap.
 
 ## Conventions
 

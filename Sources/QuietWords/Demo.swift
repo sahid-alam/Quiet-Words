@@ -6,6 +6,9 @@ import os
 /// Phase checks. Run from inside the bundle so TCC attributes the grants to the app:
 ///   build/QuietWords.app/Contents/MacOS/QuietWords --demo-audio
 func runDemo(_ name: String) async {
+    // Unbuffered: a precondition failure kills the process without flushing stdout, and a
+    // check that fails silently is worse than no check.
+    setvbuf(stdout, nil, _IONBF, 0)
     switch name {
     case "audio": await demoAudio()
     case "transcribe": await demoTranscribe()
@@ -14,6 +17,7 @@ func runDemo(_ name: String) async {
     case "dictionary": demoDictionary()
     case "window": await demoWindow()
     case "login": await demoLogin()
+    case "devices": demoDevices()
     default: print("unknown demo '\(name)'"); exit(2)
     }
 }
@@ -25,11 +29,15 @@ private func demoAudio() async {
                                channels: 1, interleaved: true)!
     let capture = AudioCapture()
     let peak = OSAllocatedUnfairLock(initialState: Float(0))
+    let recording = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appending(path: "quietwords-capture-check.wav")
+    try? FileManager.default.removeItem(at: recording)
 
     print("recording 2s — say something")
     let stream: AsyncStream<AnalyzerInput>
     do {
-        stream = try capture.start(format: target) { level in
+        print("input: \(AudioDevices.systemDefault()?.name ?? "unknown")")
+        stream = try capture.start(format: target, recordTo: recording) { level in
             peak.withLock { $0 = max($0, level) }
         }
     } catch {
@@ -58,6 +66,12 @@ private func demoAudio() async {
     precondition(formats == ["16000.0/3"], "buffers were not converted to the target format")
     precondition(seconds > 1.0, "captured less than half the requested audio")
     precondition(level > 0, "peak RMS was zero — the tap saw silence")
+
+    // The recording sink is what retry and playback depend on.
+    let written = try? AVAudioFile(forReading: recording)
+    precondition(written != nil, "no WAV was written")
+    precondition(written!.length == frames, "WAV holds \(written!.length) frames, stream carried \(frames)")
+    print("recorded \(recording.lastPathComponent) — \(written!.length) frames")
     print("PASS audio")
 }
 
@@ -74,31 +88,9 @@ private func demoTranscribe() async {
         say.waitUntilExit()
         precondition(say.terminationStatus == 0, "say failed")
 
-        let session = try await TranscriptionSession.make(locale: Locale(identifier: "en-US"))
-        // Exercise the contextual-strings path too — it runs on every real dictation once
-        // the user has a dictionary, and setContext rejecting this ordering would fail
-        // silently otherwise.
-        await session.bias(toward: ["Xcode", "Claude Code"])
-        let file = try AVAudioFile(forReading: url)
-        guard let converter = AVAudioConverter(from: file.processingFormat, to: session.format) else {
-            print("FAIL no converter"); exit(1)
-        }
-
-        let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
-        try await session.start(inputs: stream) { print("  ~ \($0)") }
-
-        // Bound by framePosition — read(into:) throws at EOF rather than returning 0 frames.
-        while file.framePosition < file.length {
-            let chunk = AVAudioFrameCount(min(4096, file.length - file.framePosition))
-            guard let read = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunk) else { break }
-            try file.read(into: read, frameCount: chunk)
-            if let out = convert(read, with: converter, to: session.format) {
-                cont.yield(AnalyzerInput(buffer: out))
-            }
-        }
-        cont.finish()
-
-        let text = await session.finish()
+        // Same call the History retry button makes, so both are covered at once.
+        let text = try await transcribe(fileAt: url, locale: Locale(identifier: "en-US"),
+                                        bias: ["Xcode", "Claude Code"])
         print("transcript: \(text)")
         precondition(!text.isEmpty, "transcript was empty")
         precondition(text.lowercased().contains("fox"), "transcript missing the expected word")
@@ -274,4 +266,28 @@ private func demoLogin() {
     if before != .enabled { settings.setLoginItem(false) }   // leave it as we found it
     precondition(after != before || after == .enabled, "register() changed nothing at all")
     print("PASS login")
+}
+
+/// Enumeration works, and automatic selection never lands on a Bluetooth mic — which is
+/// the whole point: holding a Bluetooth mic drops that headset's output to phone quality.
+private func demoDevices() {
+    let inputs = AudioDevices.inputs()
+    for input in inputs {
+        print("  \(input.name)  uid=\(input.uid)  builtIn=\(input.isBuiltIn) bluetooth=\(input.isBluetooth)")
+    }
+    precondition(!inputs.isEmpty, "no input devices found at all")
+    precondition(inputs.allSatisfy { !$0.uid.isEmpty }, "a device came back with no UID")
+
+    let automatic = AudioDevices.resolve(preferred: "")
+    print("automatic -> \(automatic?.name ?? "system default")")
+    if let automatic {
+        precondition(!automatic.isBluetooth, "automatic picked a Bluetooth mic")
+    }
+    // An explicit choice is honoured even when it is Bluetooth.
+    if let bluetooth = inputs.first(where: \.isBluetooth) {
+        precondition(AudioDevices.resolve(preferred: bluetooth.uid)?.uid == bluetooth.uid,
+                     "an explicit Bluetooth choice was overridden")
+        print("explicit Bluetooth choice honoured: \(bluetooth.name)")
+    }
+    print("PASS devices")
 }

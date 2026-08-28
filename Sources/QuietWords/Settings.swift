@@ -53,6 +53,10 @@ enum Cue: String {
 @Observable
 final class Settings {
     var soundCues = true { didSet { save() } }
+    /// Recordings are what make retry and playback possible. ~2MB a minute.
+    var saveAudio = true { didSet { save(); onChange() } }
+    var audioRetentionDays = 7 { didSet { save() } }
+    var ceilingMinutes = 20 { didSet { save(); onChange() } }
     var stripFillers = true { didSet { save() } }
     var stripDiscourseMarkers = false { didSet { save() } }
     /// These three cannot be applied in place — the tap and the warm transcription
@@ -76,6 +80,9 @@ final class Settings {
         file = directory.appending(path: "settings.json")
         if let saved = readJSON(Saved.self, from: file) {
             soundCues = saved.soundCues
+            saveAudio = saved.saveAudio
+            audioRetentionDays = saved.audioRetentionDays
+            ceilingMinutes = saved.ceilingMinutes
             stripFillers = saved.stripFillers
             stripDiscourseMarkers = saved.stripDiscourseMarkers
             handsFree = saved.handsFree
@@ -124,6 +131,9 @@ final class Settings {
 
     private struct Saved: Codable {
         var soundCues = true
+        var saveAudio = true
+        var audioRetentionDays = 7
+        var ceilingMinutes = 20
         var stripFillers = true
         var stripDiscourseMarkers = false
         var handsFree = true
@@ -135,7 +145,9 @@ final class Settings {
         guard loaded else { return }
         // `loaded` also gates onChange — see the didSet observers above, which call save()
         // first and would otherwise fire a rebuild for every field restored at launch.
-        writeJSON(Saved(soundCues: soundCues, stripFillers: stripFillers,
+        writeJSON(Saved(soundCues: soundCues, saveAudio: saveAudio,
+                        audioRetentionDays: audioRetentionDays, ceilingMinutes: ceilingMinutes,
+                        stripFillers: stripFillers,
                         stripDiscourseMarkers: stripDiscourseMarkers, handsFree: handsFree,
                         hotkeyCode: hotkeyCode, localeIdentifier: localeIdentifier),
                   to: file)

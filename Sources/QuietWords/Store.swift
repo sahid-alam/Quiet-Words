@@ -34,6 +34,8 @@ struct Entry: Codable, Identifiable, Equatable {
     var duration: TimeInterval
     /// Bundle identifier of whatever the text was injected into.
     var app: String?
+    /// File name inside the audio directory, when the recording still exists.
+    var audio: String?
 }
 
 /// A mishearing and what it should have been. Biasing the model with `meant` gets most
@@ -163,14 +165,48 @@ final class Store {
         saveHistory()
     }
 
+    func replace(_ entry: Entry, withText text: String) {
+        guard let index = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        history[index].text = text
+        saveHistory()
+    }
+
     func delete(_ entry: Entry) {
+        if let audio = audioURL(for: entry) { try? FileManager.default.removeItem(at: audio) }
         history.removeAll { $0.id == entry.id }
         saveHistory()
     }
 
     func clearHistory() {
+        try? FileManager.default.removeItem(at: audioDirectory)
         history = []
         saveHistory()
+    }
+
+    var audioDirectory: URL { directory.appending(path: "audio") }
+
+    func audioURL(for entry: Entry) -> URL? {
+        guard let name = entry.audio else { return nil }
+        let url = audioDirectory.appending(path: name)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Recordings are ~2MB a minute, so they are the one thing here that needs a sweep.
+    /// The transcripts themselves stay until the 2000-row cap trims them.
+    func pruneAudio(olderThan days: Int) {
+        guard days > 0 else { return }
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: audioDirectory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        var removed = 0
+        for file in files {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            guard let modified, modified < cutoff else { continue }
+            try? FileManager.default.removeItem(at: file)
+            removed += 1
+        }
+        if removed > 0 { logger.log("pruned \(removed, privacy: .public) recordings older than \(days, privacy: .public)d") }
     }
 
     private func saveHistory() { writeJSON(history, to: historyFile) }

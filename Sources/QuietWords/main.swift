@@ -37,22 +37,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dictation.onLevel = { [hud] level in
             Task { @MainActor in hud.push(level: level) }
         }
-        dictation.onTranscript = { [weak self] text in
+        dictation.onTranscript = { [weak self] text, audio in
             guard let self else { return }
             let corrected = settings.polish(store.correct(text))
             log.log("dictated: \(corrected, privacy: .public)")
             let entry = Entry(text: corrected, duration: lastHold,
-                              app: target?.bundleIdentifier)
+                              app: target?.bundleIdentifier, audio: audio)
             let target = self.target
             Task {
                 // Inject first: writing history is a synchronous JSON encode, and doing it
                 // before the paste puts it straight in the latency path of every dictation.
                 await Injector.inject(corrected, into: target)
                 self.store.record(entry)
+                self.store.pruneAudio(olderThan: self.settings.audioRetentionDays)
             }
         }
-        dictation.locale = settings.locale
+        dictation.onAutoStop = { [weak self] in
+            self?.hud.hide()
+            self?.settings.play(.stop)
+        }
         settings.onChange = { [weak self] in self?.applySettings() }
+        applySettings()
+        store.pruneAudio(olderThan: settings.audioRetentionDays)
         installHotkey()
         buildStatusItem()
     }
@@ -110,7 +116,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// tear down and rebuild rather than being picked up in place.
     private func applySettings() {
         dictation.locale = settings.locale
-        hotkey = nil              // release the old tap before installing the new one
+        dictation.ceiling = TimeInterval(settings.ceilingMinutes) * 60
+        dictation.recordingsDirectory = settings.saveAudio ? store.audioDirectory : nil
+        guard statusItem != nil else { return }   // launch path installs the tap itself
+        hotkey = nil                               // release the old tap before the new one
         hotkey = makeHotkey()
         statusItem?.menu = buildMenu()
     }
@@ -134,6 +143,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ? "Hold \(settings.hotkey.name) to dictate, double-tap to latch"
                 : "Hold \(settings.hotkey.name) to dictate"
             menu.addItem(withTitle: hint, action: nil, keyEquivalent: "").isEnabled = false
+            menu.addItem(.separator())
+        }
+        // Bluetooth is worth surfacing without making anyone open Settings first.
+        if let input = AudioDevices.systemDefault(), input.isBluetooth {
+            let warning = menu.addItem(
+                withTitle: "⚠︎ Recording from \(input.name) — dims its audio",
+                action: #selector(openMainWindow), keyEquivalent: "")
+            warning.target = self
             menu.addItem(.separator())
         }
         let history = menu.addItem(withTitle: "History & Dictionary…",
