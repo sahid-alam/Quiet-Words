@@ -88,10 +88,11 @@ private struct SettingsTab: View {
                     Text("Quiet Words records from whatever macOS has set as the input. While a Bluetooth headset's microphone is open, macOS drops it into hands-free mode and everything you play through it — music, video, calls — falls to phone-call quality until dictation stops.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let wired = AudioDevices.resolve(preferred: "") {
+                    if let wired = AudioDevices.preferredWired() {
                         Button("Switch system input to \(wired.name)") {
                             AudioDevices.makeSystemDefault(wired)
                             self.current = AudioDevices.systemDefault()
+                            settings.onChange()   // rebuilds the menu bar warning
                         }
                     }
                 }

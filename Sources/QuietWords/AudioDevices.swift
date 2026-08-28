@@ -11,8 +11,8 @@ private let logger = Logger(subsystem: "com.sahidalam.quietwords", category: "de
 /// — music, video, calls — for as long as the mic is held. That is worth warning about.
 ///
 /// Recording from a different device instead was tried and abandoned; see the
-/// input-device trap in CLAUDE.md. `resolve` still names the device the app *would*
-/// prefer, which is what the warning in Settings is built from.
+/// input-device trap in CLAUDE.md. `preferredWired` names what to switch the *system*
+/// default to, which is what the button in Settings offers.
 struct AudioInput: Identifiable, Hashable {
     var id: String { uid }
     let uid: String
@@ -47,16 +47,11 @@ enum AudioDevices {
         return describe(id)
     }
 
-    /// The device the app would prefer, given a saved preference.
-    ///
-    /// An empty preference means automatic: built-in first, then anything that is not
-    /// Bluetooth, and only then the system default. Returns nil to leave the engine on
-    /// whatever the system picked.
-    static func resolve(preferred uid: String) -> AudioInput? {
+    /// A microphone that will not put a headset into hands-free mode: built-in first,
+    /// then anything else that is not Bluetooth. nil when every input is Bluetooth.
+    static func preferredWired() -> AudioInput? {
         let inputs = inputs()
-        if !uid.isEmpty, let chosen = inputs.first(where: { $0.uid == uid }) { return chosen }
-        if let builtIn = inputs.first(where: \.isBuiltIn) { return builtIn }
-        return inputs.first { !$0.isBluetooth }
+        return inputs.first(where: \.isBuiltIn) ?? inputs.first { !$0.isBluetooth }
     }
 
     /// Changes the system default input. Deliberately an explicit, user-pressed action:

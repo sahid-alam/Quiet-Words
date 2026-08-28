@@ -5,7 +5,7 @@ import os
 let log = Logger(subsystem: "com.sahidalam.quietwords", category: "app")
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A tap-and-release this short is a fumble, not speech.
     private static let minimumHold: TimeInterval = 0.2
 
@@ -131,8 +131,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
+    /// Rebuilt every time the menu opens — earbuds get connected after launch, and a
+    /// warning that only reflects the state at startup is worse than none.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        populate(menu)
+    }
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
+        populate(menu)
+        return menu
+    }
+
+    private func populate(_ menu: NSMenu) {
         if hotkey == nil {
             let grant = menu.addItem(withTitle: "Grant Accessibility to enable dictation…",
                                      action: #selector(openAccessibilitySettings), keyEquivalent: "")
@@ -158,7 +171,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         history.target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Quiet Words", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        return menu
     }
 
     @objc private func openMainWindow() { mainWindow.show() }

@@ -278,16 +278,11 @@ private func demoDevices() {
     precondition(!inputs.isEmpty, "no input devices found at all")
     precondition(inputs.allSatisfy { !$0.uid.isEmpty }, "a device came back with no UID")
 
-    let automatic = AudioDevices.resolve(preferred: "")
-    print("automatic -> \(automatic?.name ?? "system default")")
-    if let automatic {
-        precondition(!automatic.isBluetooth, "automatic picked a Bluetooth mic")
-    }
-    // An explicit choice is honoured even when it is Bluetooth.
-    if let bluetooth = inputs.first(where: \.isBluetooth) {
-        precondition(AudioDevices.resolve(preferred: bluetooth.uid)?.uid == bluetooth.uid,
-                     "an explicit Bluetooth choice was overridden")
-        print("explicit Bluetooth choice honoured: \(bluetooth.name)")
+    print("recording from -> \(AudioDevices.systemDefault()?.name ?? "unknown")")
+    let wired = AudioDevices.preferredWired()
+    print("would switch to -> \(wired?.name ?? "nothing — every input is Bluetooth")")
+    if let wired {
+        precondition(!wired.isBluetooth, "the suggested input is itself Bluetooth")
     }
     print("PASS devices")
 }
