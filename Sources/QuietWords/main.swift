@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var hotkey: Hotkey?
     private let dictation = Dictation()
+    private let hud = HUD()
     /// Whoever was frontmost at key-down owns the text, even if focus moves while talking.
     private var target: NSRunningApplication?
 
@@ -28,6 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.log("mic access granted=\(granted, privacy: .public)")
         }
 
+        dictation.onVolatile = { [hud] in hud.setText($0) }
+        dictation.onLevel = { [hud] level in
+            Task { @MainActor in hud.push(level: level) }
+        }
         dictation.onTranscript = { [weak self] text in
             log.log("dictated: \(text, privacy: .public)")
             let target = self?.target
@@ -40,11 +45,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handle(_ signal: Hotkey.Signal) {
         switch signal {
         case .down:
+            // Capture the target before the HUD appears, so a HUD that misbehaves and
+            // steals focus can't quietly retarget the injection.
             target = NSWorkspace.shared.frontmostApplication
+            hud.show()
             dictation.begin()
         case .up(let held):
+            hud.hide()
             held < Self.minimumHold ? dictation.cancel() : dictation.end()
         case .cancel:
+            hud.hide()
             dictation.cancel()
         }
     }

@@ -149,6 +149,20 @@ Also: the frontmost app must not change between capture and injection. Capture
 > known-failure. Plus an automated check that the pasteboard is byte-identical before
 > and after an injection.
 
+| Target | Result | Measured |
+|---|---|---|
+| Antigravity IDE (`com.google.antigravity-ide`) — Electron | works | 2026-08-28, 47 and 202 chars |
+| TextEdit | untested | |
+| Notes | untested | |
+| Safari address bar | untested | |
+| Cursor / VS Code | untested | |
+| Slack | untested | |
+| Terminal | untested | |
+
+Electron was the one expected to fail, and paste carries it. The pasteboard round-trip is
+`--demo inject`; note that check cannot prove the paste itself, because a binary launched
+from a shell inherits the terminal's TCC identity and `CGEvent.post` silently no-ops.
+
 ---
 
 ### Phase 5 — HUD

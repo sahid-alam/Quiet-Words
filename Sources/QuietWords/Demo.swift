@@ -10,6 +10,7 @@ func runDemo(_ name: String) async {
     case "audio": await demoAudio()
     case "transcribe": await demoTranscribe()
     case "inject": await demoInject()
+    case "hud": await demoHUD()
     default: print("unknown demo '\(name)'"); exit(2)
     }
 }
@@ -123,4 +124,30 @@ private func demoInject() async {
     precondition(before == after, "pasteboard was not restored byte-identically")
     print("restored \(after.count) item(s), \(after.first?.count ?? 0) type(s)")
     print("PASS inject (clipboard preserved)")
+}
+
+/// Phase 5's check: the overlay is visible and the frontmost app does not change. If it
+/// does, the panel became key and every injection after it lands in the wrong window.
+@MainActor
+private func demoHUD() async {
+    NSApplication.shared.setActivationPolicy(.accessory)
+    let before = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+
+    let hud = HUD()
+    hud.show()
+    hud.setText("the quick brown fox jumps over the lazy dog")
+    for _ in 0..<45 {
+        hud.push(level: Float.random(in: 0.0005...0.2))
+        try? await Task.sleep(for: .milliseconds(70))
+    }
+    let after = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+    let shot = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "quietwords-hud.png")
+    try? hud.writePNG(to: shot)
+    print("rendered \(shot.path)")
+    hud.hide()
+    try? await Task.sleep(for: .milliseconds(400))
+
+    print("frontmost before=\(before) after=\(after)")
+    precondition(before == after, "the HUD stole focus — injection would land in the wrong app")
+    print("PASS hud")
 }
