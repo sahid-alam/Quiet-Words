@@ -82,17 +82,17 @@ final class Settings {
     init(directory: URL = quietWordsDirectory) {
         file = directory.appending(path: "settings.json")
         if let saved = readJSON(Saved.self, from: file) {
-            soundCues = saved.soundCues
-            saveAudio = saved.saveAudio
-            audioRetentionDays = saved.audioRetentionDays
-            ceilingMinutes = saved.ceilingMinutes
-            stripFillers = saved.stripFillers
-            stripDiscourseMarkers = saved.stripDiscourseMarkers
-            hinglishAssist = saved.hinglishAssist
-            collapseStutters = saved.collapseStutters
-            handsFree = saved.handsFree
-            hotkeyCode = saved.hotkeyCode
-            localeIdentifier = saved.localeIdentifier
+            soundCues = saved.soundCues ?? soundCues
+            saveAudio = saved.saveAudio ?? saveAudio
+            audioRetentionDays = saved.audioRetentionDays ?? audioRetentionDays
+            ceilingMinutes = saved.ceilingMinutes ?? ceilingMinutes
+            stripFillers = saved.stripFillers ?? stripFillers
+            stripDiscourseMarkers = saved.stripDiscourseMarkers ?? stripDiscourseMarkers
+            hinglishAssist = saved.hinglishAssist ?? hinglishAssist
+            collapseStutters = saved.collapseStutters ?? collapseStutters
+            handsFree = saved.handsFree ?? handsFree
+            hotkeyCode = saved.hotkeyCode ?? hotkeyCode
+            localeIdentifier = saved.localeIdentifier ?? localeIdentifier
             // onChange is still the default no-op here; the app sets it after init.
         }
         loaded = true
@@ -135,18 +135,24 @@ final class Settings {
         logger.log("login item status=\(self.loginItemStatus.rawValue, privacy: .public)")
     }
 
+    /// Every field optional, deliberately.
+    ///
+    /// Swift's synthesised `Decodable` does not fall back to a property's default when a
+    /// key is missing — it throws. So adding one setting made every existing
+    /// settings.json fail to decode and silently reset every other preference. Optionals
+    /// decode as nil when absent, and the defaults live at the point of use below.
     private struct Saved: Codable {
-        var soundCues = true
-        var saveAudio = true
-        var audioRetentionDays = 7
-        var ceilingMinutes = 20
-        var stripFillers = true
-        var stripDiscourseMarkers = false
-        var hinglishAssist = false
-        var collapseStutters = true
-        var handsFree = true
-        var hotkeyCode = HotkeyChoice.default.keyCode
-        var localeIdentifier = ""
+        var soundCues: Bool?
+        var saveAudio: Bool?
+        var audioRetentionDays: Int?
+        var ceilingMinutes: Int?
+        var stripFillers: Bool?
+        var stripDiscourseMarkers: Bool?
+        var hinglishAssist: Bool?
+        var collapseStutters: Bool?
+        var handsFree: Bool?
+        var hotkeyCode: Int64?
+        var localeIdentifier: String?
     }
 
     private func save() {

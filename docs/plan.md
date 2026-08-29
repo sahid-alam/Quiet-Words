@@ -182,8 +182,13 @@ from a shell inherits the terminal's TCC identity and `CGEvent.post` silently no
 
 ### Phase 6 — Main window
 
-- History: every transcript with timestamp, duration, and the target app. JSON-backed,
-  searchable, copy and delete. Cap at a few thousand entries with trimming.
+- History: every transcript with timestamp, duration, and the target app. Searchable,
+  copy and delete. **Never trimmed** — the original plan capped it at a few thousand
+  entries, which was wrong once history became the corpus for a future clean-up model.
+  It is the only record of how this person actually speaks, and a row dropped to save
+  four kilobytes is gone for good. Stored as JSONL, one object per line, oldest first,
+  so appending stays O(1) however large it grows. Recordings are a separate matter — 2MB
+  a minute — and are the only thing swept, on a setting, where 0 means keep everything.
 - Dictionary: user terms that get corrected in post-processing — `claude code`,
   `Xcode`, proper nouns. The video demonstrates this working and it is the single
   highest-value feature after transcription itself.

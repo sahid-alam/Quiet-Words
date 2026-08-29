@@ -241,6 +241,34 @@ private func demoWindow() {
     precondition(reread.history.count == 2, "history did not persist")
     precondition(reread.correct("clawed code is running") == "Claude Code is running",
                  "terms did not survive the round trip")
+    // Nothing trims history. The old cap was 2000, so go past it and check on disk too.
+    let bulk = Store(directory: scratch)
+    for index in 0..<2_500 {
+        bulk.record(Entry(text: "entry number \(index)", duration: 1))
+    }
+    precondition(bulk.history.count == 2_502, "history was trimmed: \(bulk.history.count)")
+    let jsonl = scratch.appending(path: "history.jsonl")
+    let lines = (try! String(contentsOf: jsonl, encoding: .utf8))
+        .split(separator: "\n").count
+    precondition(lines == 2_502, "\(lines) lines on disk for 2502 entries")
+    let reloaded = Store(directory: scratch)
+    precondition(reloaded.history.count == 2_502, "reload lost entries")
+    precondition(reloaded.history.first?.text == "entry number 2499", "newest is not first after reload")
+    print("history: 2502 entries, \(lines) lines, survived reload, nothing trimmed")
+
+    // The pre-JSONL array file is folded in rather than abandoned.
+    let legacy = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "quietwords-demo-legacy")
+    try? FileManager.default.removeItem(at: legacy)
+    try! FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+    let old = [Entry(text: "from the old array file", duration: 2, app: "com.apple.TextEdit")]
+    writeJSON(old, to: legacy.appending(path: "history.json"))
+    let migrated = Store(directory: legacy)
+    precondition(migrated.history.count == 1, "legacy history was not migrated")
+    precondition(FileManager.default.fileExists(atPath: legacy.appending(path: "history.json.bak").path),
+                 "the old file was not set aside")
+    precondition(Store(directory: legacy).history.count == 1, "migration did not stick, or duplicated")
+    print("migrated legacy history.json and kept a .bak")
+
     // Stats over a known history — `now` is injected so the streak needs no waiting.
     let calendar = Calendar(identifier: .gregorian)
     let now = calendar.startOfDay(for: Date()).addingTimeInterval(12 * 3600)
@@ -279,6 +307,23 @@ private func demoLogin() {
     print("  0=notRegistered 1=enabled 2=requiresApproval 3=notFound")
     if before != .enabled { settings.setLoginItem(false) }   // leave it as we found it
     precondition(after != before || after == .enabled, "register() changed nothing at all")
+    // A settings.json written before a field existed must keep every other preference.
+    // Swift's synthesised Decodable throws on a missing key rather than using the
+    // property default, which silently reset everything the last time a field was added.
+    let old = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "quietwords-demo-oldsettings")
+    try? FileManager.default.removeItem(at: old)
+    try! FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+    // Deliberately non-default values, and no key for anything added later.
+    try! Data(#"{"soundCues":false,"hotkeyCode":63,"stripFillers":false}"#.utf8)
+        .write(to: old.appending(path: "settings.json"))
+    let upgraded = Settings(directory: old)
+    precondition(upgraded.soundCues == false, "an existing preference was reset")
+    precondition(upgraded.hotkeyCode == 63, "the hotkey binding was reset")
+    precondition(upgraded.stripFillers == false, "a clean-up preference was reset")
+    precondition(upgraded.collapseStutters == true, "a field absent from the file lost its default")
+    precondition(upgraded.ceilingMinutes == 20, "a field absent from the file lost its default")
+    print("older settings.json upgraded without losing preferences")
+
     print("PASS login")
 }
 

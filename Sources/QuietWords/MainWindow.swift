@@ -96,9 +96,14 @@ private struct SettingsTab: View {
                 Text("Roughly 2 MB a minute. Without it, History has no playback and no retry.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Stepper("Delete after \(settings.audioRetentionDays) days",
-                        value: $settings.audioRetentionDays, in: 1...90)
+                Stepper(settings.audioRetentionDays == 0
+                        ? "Keep recordings forever"
+                        : "Delete recordings after \(settings.audioRetentionDays) days",
+                        value: $settings.audioRetentionDays, in: 0...90)
                     .disabled(!settings.saveAudio)
+                Text("Transcripts are never deleted — they are the record of how you actually speak, and the corpus for any future clean-up model. Only recordings are swept, and only if you ask.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Stepper("Stop after \(settings.ceilingMinutes) minutes",
                         value: $settings.ceilingMinutes, in: 1...60)
             }

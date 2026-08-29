@@ -164,20 +164,40 @@ final class Store {
     private(set) var history: [Entry] = []
     var terms: [Term] = [] { didSet { if loaded { saveTerms() } } }
 
-    private static let historyLimit = 2000
     private let directory: URL
     private var loaded = false
 
-    // Two files, not one: the dictionary is rewritten on every keystroke in the editor
-    // and the history can run to a few hundred KB. Keeping them apart makes that free.
-    private var historyFile: URL { directory.appending(path: "history.json") }
+    // Two files, not one: the dictionary is rewritten on every keystroke in the editor.
+    //
+    // History is JSONL — one JSON object per line, oldest first — and nothing ever trims
+    // it. It is the only record of how this person actually speaks, which makes it the
+    // corpus for any future cleanup model, and a row deleted to save four kilobytes is
+    // gone for good. Append is O(1) whatever the file grows to; re-encoding a whole array
+    // on every dictation would not be.
+    private var historyFile: URL { directory.appending(path: "history.jsonl") }
+    private var legacyHistoryFile: URL { directory.appending(path: "history.json") }
     private var termsFile: URL { directory.appending(path: "dictionary.json") }
 
     init(directory: URL = quietWordsDirectory) {
         self.directory = directory
-        history = readJSON([Entry].self, from: directory.appending(path: "history.json")) ?? []
         terms = readJSON([Term].self, from: directory.appending(path: "dictionary.json")) ?? []
+        history = Self.readHistory(directory.appending(path: "history.jsonl"))
         loaded = true
+        migrateLegacyHistory()
+    }
+
+    /// The pre-JSONL array file. Read once, folded in, then set aside rather than deleted.
+    private func migrateLegacyHistory() {
+        guard FileManager.default.fileExists(atPath: legacyHistoryFile.path),
+              let old = readJSON([Entry].self, from: legacyHistoryFile) else { return }
+        let known = Set(history.map(\.id))
+        let merged = old.filter { !known.contains($0.id) }
+        guard !merged.isEmpty else { return }
+        history = (history + merged).sorted { $0.date > $1.date }
+        rewriteHistory()
+        try? FileManager.default.moveItem(at: legacyHistoryFile,
+                                          to: directory.appending(path: "history.json.bak"))
+        logger.log("migrated \(merged.count, privacy: .public) entries to history.jsonl")
     }
 
     /// The strings to bias the transcriber toward, so it gets them right up front rather
@@ -188,28 +208,26 @@ final class Store {
 
     func record(_ entry: Entry) {
         history.insert(entry, at: 0)
-        if history.count > Self.historyLimit {
-            history.removeLast(history.count - Self.historyLimit)
-        }
-        saveHistory()
+        append(entry)
     }
 
     func replace(_ entry: Entry, withText text: String) {
         guard let index = history.firstIndex(where: { $0.id == entry.id }) else { return }
         history[index].text = text
-        saveHistory()
+        rewriteHistory()
     }
 
+    /// Only ever from the user's own hand — nothing here deletes a transcript on its own.
     func delete(_ entry: Entry) {
         if let audio = audioURL(for: entry) { try? FileManager.default.removeItem(at: audio) }
         history.removeAll { $0.id == entry.id }
-        saveHistory()
+        rewriteHistory()
     }
 
     func clearHistory() {
         try? FileManager.default.removeItem(at: audioDirectory)
         history = []
-        saveHistory()
+        rewriteHistory()
     }
 
     var audioDirectory: URL { directory.appending(path: "audio") }
@@ -220,8 +238,8 @@ final class Store {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    /// Recordings are ~2MB a minute, so they are the one thing here that needs a sweep.
-    /// The transcripts themselves stay until the 2000-row cap trims them.
+    /// Recordings are ~2MB a minute, so they are the one thing here that gets swept —
+    /// and only when asked, since 0 means keep everything. Transcripts are never touched.
     func pruneAudio(olderThan days: Int) {
         guard days > 0 else { return }
         let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
@@ -238,7 +256,50 @@ final class Store {
         if removed > 0 { logger.log("pruned \(removed, privacy: .public) recordings older than \(days, privacy: .public)d") }
     }
 
-    private func saveHistory() { writeJSON(history, to: historyFile) }
+    private static func readHistory(_ url: URL) -> [Entry] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        let decoder = JSONDecoder()
+        // Oldest first on disk so appending works; newest first in memory for the list.
+        return text.split(separator: "\n")
+            .compactMap { try? decoder.decode(Entry.self, from: Data($0.utf8)) }
+            .reversed()
+    }
+
+    private func append(_ entry: Entry) {
+        guard let json = try? JSONEncoder().encode(entry) else { return }
+        var line = json
+        line.append(0x0A)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            if let handle = try? FileHandle(forWritingTo: historyFile) {
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: line)
+            } else {
+                try line.write(to: historyFile, options: .atomic)
+            }
+        } catch {
+            logger.error("append failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Only for edits and deletions the user asked for, which are rare.
+    private func rewriteHistory() {
+        let encoder = JSONEncoder()
+        var out = Data()
+        for entry in history.reversed() {
+            guard let json = try? encoder.encode(entry) else { continue }
+            out.append(json)
+            out.append(0x0A)
+        }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try out.write(to: historyFile, options: .atomic)
+        } catch {
+            logger.error("rewrite failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func saveTerms() { writeJSON(terms, to: termsFile) }
 
 }
