@@ -15,6 +15,7 @@ func runDemo(_ name: String) async {
     case "inject": await demoInject()
     case "hud": await demoHUD()
     case "dictionary": demoDictionary()
+    case "learning": await demoLearning()
     case "window": await demoWindow()
     case "login": await demoLogin()
     case "devices": demoDevices()
@@ -436,4 +437,47 @@ private func demoHinglish() async {
         print("FAIL \(error.localizedDescription)")
         exit(1)
     }
+}
+
+/// The bug this exists for: emitting on the first observed change caught a half-typed
+/// word — "blood" -> "c" on the way to "Claude". Drives the watcher with a scripted
+/// keystroke sequence instead of a real keyboard.
+@MainActor
+private func demoLearning() async {
+    func settled(_ frames: [String], injected: String) async -> Term? {
+        var remaining = frames
+        var last = frames.first
+        let watcher = EditWatcher(
+            read: {
+                if !remaining.isEmpty { last = remaining.removeFirst() }
+                return last
+            },
+            interval: .milliseconds(1), window: 60, settle: 4)
+        var learned: Term?
+        watcher.onCorrection = { learned = $0 }
+        watcher.watch(injected: injected)
+        await watcher.finish()
+        return learned
+    }
+
+    // Typing "Claude" one letter at a time over "blood", then stopping.
+    let typing = ["I opened blood today"]
+        + ["", "c", "cl", "cla", "clau", "claud", "claude"].map { "I opened \($0) today" }
+        + Array(repeating: "I opened claude today", count: 10)
+    let term = await settled(typing, injected: "I opened blood today")
+    print("  typed one letter at a time -> \(term.map { "\($0.heard) -> \($0.meant)" } ?? "nil")")
+    precondition(term?.heard == "blood" && term?.meant == "claude",
+                 "caught a half-typed word: \(String(describing: term))")
+
+    // Untouched text proposes nothing.
+    let idle = Array(repeating: "I opened blood today", count: 12)
+    let none = await settled(idle, injected: "I opened blood today")
+    precondition(none == nil, "proposed a correction from an untouched field")
+    print("  untouched field -> nothing")
+
+    // Adding punctuation is an edit, not a correction.
+    precondition(correction(from: "it was created", to: "it was created,") == nil,
+                 "punctuation-only change was treated as a correction")
+    print("  created -> created, -> nothing")
+    print("PASS learning")
 }

@@ -43,10 +43,14 @@ func correction(from original: String, to edited: String) -> Term? {
     let meant = after[head..<(after.count - tail)].joined(separator: " ")
     // Pure insertions and deletions are not corrections, and a long replacement is a
     // rewrite rather than a fix.
+    // Adding a comma is an edit, not a correction, and "created -> created," is noise.
+    let bare = { (s: String) in
+        s.trimmingCharacters(in: .punctuationCharacters).lowercased()
+    }
     guard !heard.isEmpty, !meant.isEmpty,
           heard.split(separator: " ").count <= 4,
           meant.split(separator: " ").count <= 4,
-          heard.caseInsensitiveCompare(meant) != .orderedSame
+          bare(heard) != bare(meant)
     else { return nil }
     return Term(heard: heard, meant: meant)
 }
@@ -60,13 +64,32 @@ func correction(from original: String, to edited: String) -> Term? {
 final class EditWatcher {
     var onCorrection: @MainActor (Term) -> Void = { _ in }
 
+    /// Where the text comes from, and how often to look. Injected so the settling logic
+    /// can be driven by a scripted sequence instead of a real keyboard.
+    private let read: @MainActor () -> String?
+    private let interval: Duration
+    private let window: Int
+    /// Consecutive unchanged polls before an edit counts as finished.
+    private let settle: Int
     private var task: Task<Void, Never>?
+
+    init(
+        read: @escaping @MainActor () -> String? = focusedText,
+        interval: Duration = .milliseconds(400),
+        window: Int = 50,
+        settle: Int = 4
+    ) {
+        self.read = read
+        self.interval = interval
+        self.window = window
+        self.settle = settle
+    }
 
     /// `injected` is the text just pasted; the field also holds whatever was there before.
     func watch(injected: String) {
         task?.cancel()
         guard !injected.isEmpty else { return }
-        guard let baseline = focusedText() else {
+        guard let baseline = read() else {
             // Whether reading AX works is per-app and unknowable in advance, so say so
             // at notice level rather than leaving the feature to fail invisibly.
             logger.log("no AX text from the focused element — cannot learn from edits in \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?", privacy: .public)")
@@ -75,24 +98,40 @@ final class EditWatcher {
         logger.log("watching \(baseline.count, privacy: .public) chars in \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?", privacy: .public) for edits")
 
         task = Task { @MainActor in
-            for _ in 0..<40 {
-                try? await Task.sleep(for: .milliseconds(500))
+            // Typing arrives one keystroke at a time. Emitting on the first difference
+            // catches a half-typed word — "blood" -> "c" on the way to "Claude" — so wait
+            // for the text to stop moving before deciding what the correction was.
+            var latest = baseline
+            var still = 0
+            for _ in 0..<window {
+                try? await Task.sleep(for: interval)
                 if Task.isCancelled { return }
-                guard let current = focusedText(), current != baseline else { continue }
-                // Compare only what we put there: the surrounding document is not ours.
-                guard let edited = revised(injected, within: baseline, now: current) else { return }
-                if let term = correction(from: injected, to: edited) {
-                    logger.log("learned candidate: \(term.heard, privacy: .public) -> \(term.meant, privacy: .public)")
-                    onCorrection(term)
+                guard let current = read() else { continue }
+                if current != latest {
+                    latest = current
+                    still = 0
+                } else if latest != baseline {
+                    still += 1
+                    if still >= settle { break }
                 }
-                return
             }
+            guard latest != baseline,
+                  let edited = revised(injected, within: baseline, now: latest),
+                  let term = correction(from: injected, to: edited)
+            else { return }
+            logger.log("learned candidate: \(term.heard, privacy: .public) -> \(term.meant, privacy: .public)")
+            onCorrection(term)
         }
     }
 
     func stop() {
         task?.cancel()
         task = nil
+    }
+
+    /// Waits for the watch to finish. Only the check needs this.
+    func finish() async {
+        await task?.value
     }
 
     /// Locates the injected run inside the field and returns what it has become. The text
