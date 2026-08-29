@@ -199,6 +199,22 @@ private func demoDictionary() {
         print("  \(input)  ->  \(got)")
     }
 
+    // A one-word fix in dictated text is the correction worth learning; a rewrite is not.
+    let edits: [(String, String, String?)] = [
+        ("I opened clawed code today", "I opened Claude Code today", "clawed code -> Claude Code"),
+        ("meet me at four", "meet me at 4pm", "four -> 4pm"),
+        ("no change here", "no change here", nil),                    // identical
+        ("hello there", "hello there friend", nil),                   // pure insertion
+        ("one two three", "one three", nil),                          // pure deletion
+        ("a b c d e f", "z y x w v u", nil),                          // a rewrite, not a fix
+    ]
+    for (before, after, expected) in edits {
+        let term = correction(from: before, to: after)
+        let got = term.map { "\($0.heard) -> \($0.meant)" }
+        precondition(got == expected, "\(before) => \(after) gave \(got ?? "nil")")
+        print("  \(before)  =>  \(after)   \(got ?? "(nothing to learn)")")
+    }
+
     // The aggressive list does strip 'like' — which is why it is off by default.
     precondition(removeFillers(from: "write code like this", words: discourseMarkers) == "write code this")
     print("PASS dictionary")

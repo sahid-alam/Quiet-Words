@@ -331,6 +331,25 @@ private struct DictionaryTab: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if !store.suggestions.isEmpty {
+                Text("Noticed from your edits")
+                    .font(.subheadline).bold()
+                List {
+                    ForEach(store.suggestions) { suggestion in
+                        HStack(spacing: 8) {
+                            Text(suggestion.heard).foregroundStyle(.secondary)
+                            Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                            Text(suggestion.meant)
+                            Spacer()
+                            Button("Add") { store.accept(suggestion) }
+                            Button("No") { store.dismiss(suggestion) }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                }
+                .frame(maxHeight: 110)
+            }
+
             List {
                 ForEach($store.terms) { $term in
                     HStack(spacing: 8) {

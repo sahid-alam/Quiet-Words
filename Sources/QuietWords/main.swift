@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = Settings()
     private lazy var mainWindow = MainWindowController(store: store, settings: settings)
     private var lastHold: TimeInterval = 0
+    private let editWatcher = EditWatcher()
     /// Whoever was frontmost at key-down owns the text, even if focus moves while talking.
     private var target: NSRunningApplication?
 
@@ -48,9 +49,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // Inject first: writing history is a synchronous JSON encode, and doing it
                 // before the paste puts it straight in the latency path of every dictation.
                 await Injector.inject(corrected, into: target)
+                // If the user fixes a word in the next few seconds, that is a correction
+                // worth offering to remember.
+                self.editWatcher.watch(injected: corrected)
                 self.store.record(entry)
                 self.store.pruneAudio(olderThan: self.settings.audioRetentionDays)
             }
+        }
+        editWatcher.onCorrection = { [weak self] term in
+            self?.store.suggest(term)
         }
         dictation.onAutoStop = { [weak self] in
             self?.hud.hide()
@@ -69,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Capture the target before the HUD appears, so a HUD that misbehaves and
             // steals focus can't quietly retarget the injection.
             target = NSWorkspace.shared.frontmostApplication
+            editWatcher.stop()
             dictation.contextualStrings = store.contextualStrings
                 + (settings.hinglishAssist ? hinglishBias : [])
             hud.show()

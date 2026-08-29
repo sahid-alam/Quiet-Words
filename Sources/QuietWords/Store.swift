@@ -163,6 +163,9 @@ func stats(for history: [Entry], now: Date = Date(), calendar: Calendar = .curre
 final class Store {
     private(set) var history: [Entry] = []
     var terms: [Term] = [] { didSet { if loaded { saveTerms() } } }
+    /// Corrections noticed in the wild, awaiting a yes or no. Never applied unasked —
+    /// a dictionary that edits itself from a guess is worse than one you fill in.
+    var suggestions: [Term] = [] { didSet { if loaded { saveSuggestions() } } }
 
     private let directory: URL
     private var loaded = false
@@ -177,10 +180,12 @@ final class Store {
     private var historyFile: URL { directory.appending(path: "history.jsonl") }
     private var legacyHistoryFile: URL { directory.appending(path: "history.json") }
     private var termsFile: URL { directory.appending(path: "dictionary.json") }
+    private var suggestionsFile: URL { directory.appending(path: "suggestions.json") }
 
     init(directory: URL = quietWordsDirectory) {
         self.directory = directory
         terms = readJSON([Term].self, from: directory.appending(path: "dictionary.json")) ?? []
+        suggestions = readJSON([Term].self, from: directory.appending(path: "suggestions.json")) ?? []
         history = Self.readHistory(directory.appending(path: "history.jsonl"))
         loaded = true
         migrateLegacyHistory()
@@ -301,5 +306,24 @@ final class Store {
     }
 
     private func saveTerms() { writeJSON(terms, to: termsFile) }
+    private func saveSuggestions() { writeJSON(suggestions, to: suggestionsFile) }
+
+    /// Ignores anything already known or already pending, so fixing the same word twice
+    /// does not queue it twice.
+    func suggest(_ term: Term) {
+        let known = terms + suggestions
+        guard !known.contains(where: { $0.heard.caseInsensitiveCompare(term.heard) == .orderedSame })
+        else { return }
+        suggestions.insert(term, at: 0)
+    }
+
+    func accept(_ suggestion: Term) {
+        suggestions.removeAll { $0.id == suggestion.id }
+        terms.append(Term(heard: suggestion.heard, meant: suggestion.meant))
+    }
+
+    func dismiss(_ suggestion: Term) {
+        suggestions.removeAll { $0.id == suggestion.id }
+    }
 
 }
