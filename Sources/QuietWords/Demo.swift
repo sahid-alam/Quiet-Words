@@ -19,6 +19,7 @@ func runDemo(_ name: String) async {
     case "login": await demoLogin()
     case "devices": demoDevices()
     case "languages": await demoLanguages()
+    case "hinglish": await demoHinglish()
     default: print("unknown demo '\(name)'"); exit(2)
     }
 }
@@ -376,4 +377,47 @@ private func demoLanguages() async {
 
     precondition(!hinglishBias.isEmpty && hinglishBias.contains("yaar"))
     print("PASS languages")
+}
+
+/// Does a custom language model actually improve romanized Hinglish?
+///
+/// Runs inside the bundle deliberately — DictationTranscriber hangs indefinitely when
+/// driven from a `swift file.swift` script, the same TCC-identity trap the injection
+/// check hit. Renders Hinglish with an Indian English voice, then transcribes it twice:
+/// plain en_IN, and en_IN with a Hinglish custom LM attached.
+@MainActor
+private func demoHinglish() async {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "quietwords-hinglish")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let audio = dir.appending(path: "sample.wav")
+    let spoken = "bhai ye code kaam nahi kar raha hai, thoda check karo yaar. matlab kya galat hai"
+
+    let say = Process()
+    say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+    say.arguments = ["-v", "Rishi", "-o", audio.path, "--data-format=LEI16@16000", spoken]
+    try? say.run()
+    say.waitUntilExit()
+    guard say.terminationStatus == 0 else { print("FAIL: say -v Rishi unavailable"); exit(1) }
+    print("spoken: \(spoken)")
+
+    let locale = Locale(identifier: "en_IN")
+    do {
+        let plain = try await transcribe(fileAt: audio, locale: locale)
+        print("plain en_IN : \(plain)")
+
+        let model = dir.appending(path: "hinglish.bin")
+        try await buildHinglishModel(at: model, locale: locale)
+        let biased = try await transcribe(fileAt: audio, locale: locale, hinglishModel: model)
+        print("custom LM   : \(biased)")
+
+        let hits = { (text: String) in
+            hinglishBias.filter { text.localizedCaseInsensitiveContains($0) }.count
+        }
+        print("hinglish words recognised — plain: \(hits(plain)), custom: \(hits(biased))")
+        precondition(!biased.isEmpty, "the custom language model produced nothing")
+        print("PASS hinglish")
+    } catch {
+        print("FAIL \(error.localizedDescription)")
+        exit(1)
+    }
 }

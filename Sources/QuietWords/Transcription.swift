@@ -7,12 +7,15 @@ private let logger = Logger(subsystem: "com.sahidalam.quietwords", category: "sp
 enum TranscriptionError: Error, LocalizedError {
     case localeUnsupported(Locale)
     case notInstalled(Language)
+    case notProvisioned(Language)
     case noCompatibleFormat
 
     var errorDescription: String? {
         switch self {
         case .localeUnsupported(let locale): "No model for \(locale.identifier)."
         case .notInstalled(let language): "\(language.name) is not downloaded yet."
+        case .notProvisioned(let language):
+            "macOS has no speech model to download for \(language.name). Add it under System Settings → Keyboard → Dictation → Languages, then try again."
         case .noCompatibleFormat: "No compatible audio format."
         }
     }
@@ -53,14 +56,30 @@ final class TranscriptionSession {
     /// Warms the analyzer. Never downloads: a first download of a language runs for
     /// minutes, and doing it here means the hotkey hangs with the HUD up and nothing to
     /// look at. Downloading is `Languages.install`, driven from Settings.
-    static func make(locale: Locale = .current) async throws -> TranscriptionSession {
+    static func make(
+        locale: Locale = .current,
+        hinglishModel: URL? = nil
+    ) async throws -> TranscriptionSession {
         guard let language = await Languages.resolve(locale) else {
             throw TranscriptionError.localeUnsupported(locale)
         }
         guard language.installed else { throw TranscriptionError.notInstalled(language) }
         try await Languages.reserve(language.locale)
 
-        let engine = Engine.make(language.locale, kind: language.kind)
+        // A custom language model forces DictationTranscriber — it is the only module
+        // that takes a content hint.
+        let engine: Engine
+        if let hinglishModel {
+            engine = .dictation(DictationTranscriber(
+                locale: language.locale,
+                contentHints: [.customizedLanguage(
+                    modelConfiguration: SFSpeechLanguageModel.Configuration(languageModel: hinglishModel))],
+                transcriptionOptions: [],
+                reportingOptions: [.volatileResults],
+                attributeOptions: []))
+        } else {
+            engine = Engine.make(language.locale, kind: language.kind)
+        }
         // Let the framework pick. availableCompatibleAudioFormats is unordered and also
         // offers 8kHz, so taking .first there quietly costs accuracy.
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [engine.module])
@@ -147,8 +166,13 @@ final class TranscriptionSession {
 /// Runs a recorded WAV back through the same analyzer path the hotkey uses. Retrying a
 /// garbled transcript and the Phase 2 check are the same operation.
 @MainActor
-func transcribe(fileAt url: URL, locale: Locale = .current, bias: [String] = []) async throws -> String {
-    let session = try await TranscriptionSession.make(locale: locale)
+func transcribe(
+    fileAt url: URL,
+    locale: Locale = .current,
+    bias: [String] = [],
+    hinglishModel: URL? = nil
+) async throws -> String {
+    let session = try await TranscriptionSession.make(locale: locale, hinglishModel: hinglishModel)
     await session.bias(toward: bias)
 
     let file = try AVAudioFile(forReading: url)

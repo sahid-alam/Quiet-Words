@@ -115,6 +115,17 @@ enum Languages {
             return
         }
         let progress = request.progress
+        logger.log("download \(language.locale.identifier, privacy: .public) units=\(progress.totalUnitCount, privacy: .public)")
+
+        // A zero-unit request means the OS has nothing to hand over, and
+        // downloadAndInstall() then never returns — measured on hi_IN, which sat at 0/1
+        // for hours. Reservation succeeding is not the same as the asset existing: Apple
+        // provisions speech assets from the languages enabled in System Settings, so a
+        // locale the framework calls "supported" can still be undownloadable here.
+        guard progress.totalUnitCount > 0 else {
+            throw TranscriptionError.notProvisioned(language)
+        }
+
         let watcher = Task {
             while !Task.isCancelled {
                 onProgress(progress.fractionCompleted)
@@ -122,7 +133,6 @@ enum Languages {
             }
         }
         defer { watcher.cancel() }
-        logger.log("downloading \(language.locale.identifier, privacy: .public), units=\(progress.totalUnitCount, privacy: .public)")
         try await request.downloadAndInstall()
         onProgress(1)
         logger.log("installed \(language.locale.identifier, privacy: .public)")
@@ -139,4 +149,66 @@ let hinglishBias = [
     "yaar", "matlab", "accha", "theek hai", "bhai", "arre", "haan", "nahi", "kya",
     "abhi", "thoda", "bohot", "kaam", "chalo", "bas", "kuch", "sahi", "galat",
     "jaldi", "phir", "lekin", "kyunki", "waise", "actually matlab", "na yaar",
+]
+
+
+/// Where the compiled Hinglish model lives, and what it was last built from — rebuilding
+/// costs seconds, so it only happens when the vocabulary actually changed.
+enum HinglishModel {
+    static var url: URL { quietWordsDirectory.appending(path: "hinglish.bin") }
+    private static var stampURL: URL { quietWordsDirectory.appending(path: "hinglish.stamp") }
+
+    /// Returns the compiled model, building it if the vocabulary has moved on.
+    /// `extra` is the user's own dictionary, so their names and jargon get the same lift.
+    static func ensure(locale: Locale, extra: [String]) async -> URL? {
+        let stamp = (hinglishPhrases + hinglishBias + extra).joined(separator: "\u{1}")
+            .hashValue.description + "|" + locale.identifier
+        if FileManager.default.fileExists(atPath: url.path),
+           let previous = try? String(contentsOf: stampURL, encoding: .utf8), previous == stamp {
+            return url
+        }
+        do {
+            try await buildHinglishModel(at: url, locale: locale, extra: extra)
+            try? stamp.write(to: stampURL, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            logger.error("hinglish model failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+}
+
+/// Builds and compiles a custom language model biased toward romanized Hindi.
+///
+/// This is a stronger lever than `contextualStrings`: contextual strings nudge the
+/// decoder at recognition time, a custom LM changes what the decoder considers likely in
+/// the first place. It is also the only Apple-native route to Hinglish that exists —
+/// every transcriber takes exactly one locale, so mixing two languages is otherwise
+/// not on offer at any price.
+func buildHinglishModel(at url: URL, locale: Locale, extra: [String] = []) async throws {
+    try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let data = SFCustomLanguageModelData(
+        locale: locale, identifier: "com.sahidalam.quietwords.hinglish", version: "1")
+
+    // Whole phrases carry more than isolated words — the decoder learns the shape of the
+    // sentence, not just the vocabulary.
+    for phrase in hinglishPhrases { data.insert(phraseCount: .init(phrase: phrase, count: 40)) }
+    for word in hinglishBias { data.insert(phraseCount: .init(phrase: word, count: 25)) }
+    for term in extra where !term.isEmpty { data.insert(phraseCount: .init(phrase: term, count: 30)) }
+
+    try await data.export(to: url)
+    let configuration = SFSpeechLanguageModel.Configuration(languageModel: url)
+    try await SFSpeechLanguageModel.prepareCustomLanguageModel(
+        for: url, clientIdentifier: "com.sahidalam.quietwords", configuration: configuration)
+    logger.log("hinglish model ready at \(url.lastPathComponent, privacy: .public)")
+}
+
+/// Sentence shapes, not just vocabulary.
+let hinglishPhrases = [
+    "bhai ye code kaam nahi kar raha hai", "thoda check karo yaar", "matlab kya galat hai",
+    "mujhe samajh nahi aa raha", "arre yaar ye kya hai", "theek hai chalo",
+    "abhi kaam karo", "bohot accha hai", "kuch problem hai kya", "phir bhi lekin",
+    "waise bhi sahi hai", "haan mujhe pata hai", "jaldi karo na", "kyunki ye zaroori hai",
+    "bas itna hi chahiye", "ek minute ruko", "kal subah dekhte hain",
 ]

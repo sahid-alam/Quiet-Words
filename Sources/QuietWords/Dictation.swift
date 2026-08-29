@@ -19,6 +19,11 @@ final class Dictation {
     var onLevel: @Sendable (Float) -> Void = { _ in }
     /// Dictionary terms to bias the model toward. Read fresh at each key-down.
     var contextualStrings: [String] = []
+    /// A compiled Hinglish language model, when the setting is on. Changing it re-warms,
+    /// because the transcriber is built around it.
+    var hinglishModel: URL? {
+        didSet { if hinglishModel != oldValue { warmUp() } }
+    }
     /// Where recordings go. nil keeps no audio, which also disables retry and playback.
     var recordingsDirectory: URL?
     /// A latched hands-free session with nobody in the room would otherwise run forever.
@@ -59,7 +64,8 @@ final class Dictation {
 
     private func warmUp() {
         let locale = locale
-        warm = Task { try await TranscriptionSession.make(locale: locale) }
+        let model = hinglishModel
+        warm = Task { try await TranscriptionSession.make(locale: locale, hinglishModel: model) }
     }
 
     private func open() async {

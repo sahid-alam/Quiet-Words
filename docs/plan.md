@@ -252,21 +252,38 @@ including `hi_IN`. So the app carries both and picks per language, preferring
 below said to add "at that point" — locale coverage proving inadequate is that point, so
 it is the condition being met rather than the decision being overruled.
 
-**There is no Hinglish, and no code-switching at any price.** `selectedLocales` is
-read-only and neither module has an initialiser taking an array of locales, so nothing
-transcribes two languages in one utterance. What exists:
+**Hinglish works, via a custom language model.** An earlier note here said it was
+impossible; that was wrong, and read off the API surface rather than measured.
 
-- `en_IN` plus a romanized-Hindi `contextualStrings` pack (`hinglishAssist`). Nudges the
-  model toward *yaar*, *matlab*, *theek hai* instead of the English words they sound like.
-  A nudge, not a second language.
-- `hi_IN` via `DictationTranscriber` for Hindi proper, which returns Devanagari.
-- Transliterating Devanagari back to Latin is possible natively
-  (`StringTransform("Devanagari-Latin")`) but produces `bha'i, ye koda kama nahim` — which
-  is nobody's Hinglish. Not shipped.
+What is genuinely unavailable is *code-switching in one model*: `selectedLocales` is
+read-only and no initialiser takes an array, so no transcriber handles two languages at
+once. But `SFCustomLanguageModelData` lets you compile a language model from your own
+phrases, and `DictationTranscriber.ContentHint.customizedLanguage` attaches it to
+`en_IN`. That changes what the decoder considers likely, which is a far stronger lever
+than `contextualStrings` nudging it at recognition time.
 
-How good `hinglishAssist` actually is needs a person speaking Hinglish into it. Same
-reason as the `AVCaptureSession` rewrite: no check here can tell a good transcript from a
-plausible-looking bad one.
+Measured, in-bundle, on `say -v Rishi` reading
+"bhai ye code kaam nahi kar raha hai, thoda check karo yaar. matlab kya galat hai":
+
+| | Transcript | Hinglish words |
+|---|---|---|
+| Plain `en_IN` | `Hi, E code, Kam Nahim, Karah, hi. Thuma, check, Karo, yar, mat, lab, yagalat, Hai.` | 2 |
+| Custom LM | `Bhai ko Kaam nahin kar raha Hai Thoda check karo Yaar Matlab Kya Galat Hai` | 8 |
+
+Four times the vocabulary recognised, and the second one is readable. It still drops
+"ye code" and spells "nahin" for "nahi", so it is good rather than solved. The model is
+compiled once into `hinglish.bin`, rebuilt only when the vocabulary changes, and the
+user's own dictionary terms go in alongside the built-in phrases.
+
+`hi_IN` is a separate matter and currently unusable: reservation succeeds, but the asset
+installation request comes back with **zero units** and `downloadAndInstall()` then never
+returns — it sat at 0/1 for hours. Apple provisions speech assets from the languages
+enabled in System Settings, so "supported" does not mean "obtainable". `Languages.install`
+now fails fast with `.notProvisioned` and says where to enable it rather than hanging.
+
+How good this is on real speech needs a person speaking Hinglish into it. Rated by
+word count against a TTS voice, which is directional only — how it handles a real person
+code-switching needs that person.
 
 Downloading a language is minutes of work — `hi_IN` ran past fifteen. So `make()` never
 downloads: it fails fast with `.notInstalled` and downloading is an explicit action in

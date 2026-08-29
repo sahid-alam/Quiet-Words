@@ -107,6 +107,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Compiling the model takes seconds, so it happens here and never on the hotkey.
+    private func applyHinglish() {
+        guard settings.hinglishAssist else {
+            dictation.hinglishModel = nil
+            return
+        }
+        let locale = settings.locale
+        let extra = store.contextualStrings
+        Task { @MainActor in
+            dictation.hinglishModel = await HinglishModel.ensure(locale: locale, extra: extra)
+        }
+    }
+
     private func makeHotkey() -> Hotkey? {
         Hotkey(choice: settings.hotkey, handsFree: settings.handsFree) { [weak self] in
             self?.handle($0)
@@ -119,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dictation.locale = settings.locale
         dictation.ceiling = TimeInterval(settings.ceilingMinutes) * 60
         dictation.recordingsDirectory = settings.saveAudio ? store.audioDirectory : nil
+        applyHinglish()
         guard statusItem != nil else { return }   // launch path installs the tap itself
         hotkey = nil                               // release the old tap before the new one
         hotkey = makeHotkey()

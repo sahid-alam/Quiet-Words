@@ -137,8 +137,8 @@ private struct SettingsTab: View {
                         Text(language.name).tag(language.locale.identifier)
                     }
                 }
-                Toggle("Hinglish assist", isOn: $settings.hinglishAssist)
-                Text("Biases an English model toward romanized Hindi — yaar, matlab, theek hai. There is no Hinglish model and no code-switching in the framework, so this is a nudge, not a second language. Pair it with English (India). For Hindi in Devanagari, pick Hindi below.")
+                Toggle("Hinglish", isOn: $settings.hinglishAssist)
+                Text("Builds a custom speech model biased toward romanized Hindi, and toward your own dictionary terms. Measured on \"bhai ye code kaam nahi kar raha hai, thoda check karo yaar\": English (India) alone heard \"Hi, E code, Kam Nahim, Karah, hi. Thuma, check, Karo, yar\" — with this on, \"Bhai ko Kaam nahin kar raha Hai Thoda check karo Yaar\". Pair it with English (India). Takes a few seconds to compile the first time.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

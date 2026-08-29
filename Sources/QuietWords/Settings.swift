@@ -60,7 +60,7 @@ final class Settings {
     var stripFillers = true { didSet { save() } }
     var stripDiscourseMarkers = false { didSet { save() } }
     /// Bias the model toward romanized Hindi. See `hinglishBias`.
-    var hinglishAssist = false { didSet { save() } }
+    var hinglishAssist = false { didSet { save(); onChange() } }
     var collapseStutters = true { didSet { save() } }
     /// These three cannot be applied in place — the tap and the warm transcription
     /// session are both built from them, so the app rebuilds when they change.
