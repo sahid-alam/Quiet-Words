@@ -31,7 +31,12 @@ enum Pane: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class Router {
-    var pane: Pane? = .home
+    /// Optional only because List's selection binding is. Clicking the empty part of the
+    /// sidebar writes nil, which leaves nothing highlighted — refuse it here, where every
+    /// writer passes through, rather than in the one binding the sidebar happens to use.
+    var pane: Pane? = .home {
+        didSet { if pane == nil { pane = oldValue } }
+    }
 }
 
 /// The app's window: a sidebar of Home, History, Dictionary and Settings. Opens at launch
@@ -40,8 +45,8 @@ final class Router {
 final class MainWindowController {
     private let store: Store
     private let settings: Settings
-    private let router = Router()
-    private var window: NSWindow?
+    let router = Router()
+    private(set) var window: NSWindow?
 
     init(store: Store, settings: Settings) {
         self.store = store
@@ -57,8 +62,14 @@ final class MainWindowController {
                 backing: .buffered,
                 defer: false)
             window.title = "Quiet Words"
-            window.contentView = NSHostingView(
+            let hosting = NSHostingView(
                 rootView: MainView(store: store, settings: settings, router: router))
+            // Only the minimum size flows from SwiftUI to the window. By default the
+            // hosting view also pushes its ideal size, and Dictionary's is 2567pt tall:
+            // clicking it grew the window to fill the screen, and the frame autosave kept
+            // it that big on every launch after.
+            hosting.sizingOptions = [.minSize]
+            window.contentView = hosting
             window.isReleasedWhenClosed = false   // reopened from the Dock, not rebuilt
             window.center()
             window.setFrameAutosaveName("QuietWordsMain")
@@ -83,18 +94,26 @@ private struct MainView: View {
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190)
         } detail: {
-            switch router.pane ?? .home {
-            case .home:
-                HomeView(store: store, settings: settings) { router.pane = $0 }
-            case .history:
-                HistoryTab(store: store, settings: settings).padding(16)
-            case .dictionary:
-                DictionaryTab(store: store).padding(16)
-            case .settings:
-                SettingsTab(settings: settings)   // a grouped Form brings its own margins
-            }
+            // Built fresh per click. Keeping every pane built and stacked removed a
+            // 100–250ms Settings stutter, but the title bar then took its scroll-edge cue
+            // from a hidden pane: the sidebar jumped 11px after one visit to Settings.
+            detail(for: router.pane ?? .home)
         }
         .frame(minWidth: 760, minHeight: 500)
+    }
+
+    @ViewBuilder
+    private func detail(for pane: Pane) -> some View {
+        switch pane {
+        case .home:
+            HomeView(store: store, settings: settings) { router.pane = $0 }
+        case .history:
+            HistoryTab(store: store, settings: settings).padding(20)
+        case .dictionary:
+            DictionaryTab(store: store)   // a grouped Form brings its own margins
+        case .settings:
+            SettingsTab(settings: settings)
+        }
     }
 }
 
@@ -155,7 +174,7 @@ private struct HomeView: View {
                     }
                 }
             }
-            .padding(28)
+            .padding(20)
             .frame(maxWidth: 820, alignment: .leading)
         }
     }
@@ -178,7 +197,24 @@ private struct StatCard: View {
     }
 }
 
-/// Learned-correction suggestions, shared by Home and Dictionary.
+/// One learned-correction suggestion with its Add / No.
+private struct SuggestionRow: View {
+    @Bindable var store: Store
+    let suggestion: Term
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(suggestion.heard).foregroundStyle(.secondary)
+            Image(systemName: "arrow.right").foregroundStyle(.secondary)
+            Text(suggestion.meant)
+            Spacer()
+            Button("Add") { store.accept(suggestion) }
+            Button("No") { store.dismiss(suggestion) }.buttonStyle(.borderless)
+        }
+    }
+}
+
+/// Home's card of suggestions.
 private struct SuggestionRows: View {
     @Bindable var store: Store
 
@@ -186,16 +222,9 @@ private struct SuggestionRows: View {
         VStack(spacing: 0) {
             ForEach(Array(store.suggestions.enumerated()), id: \.element.id) { index, suggestion in
                 if index > 0 { Divider() }
-                HStack(spacing: 8) {
-                    Text(suggestion.heard).foregroundStyle(.secondary)
-                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                    Text(suggestion.meant)
-                    Spacer()
-                    Button("Add") { store.accept(suggestion) }
-                    Button("No") { store.dismiss(suggestion) }.buttonStyle(.borderless)
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 12)
+                SuggestionRow(store: store, suggestion: suggestion)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 12)
             }
         }
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
@@ -456,28 +485,32 @@ private struct HistoryTab: View {
     }
 }
 
+/// A grouped Form, the same container as Settings, so both panes share insets and cards.
+/// Before this it was a VStack stacking a paragraph, a card and a List: that asked for
+/// 2567pt of height and the pane rendered completely blank — one brightness level in the
+/// whole detail area. A plain List after that fixed the blank but sat 16px higher than
+/// the other panes and truncated its explanation to one line.
 private struct DictionaryTab: View {
     @Bindable var store: Store
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("What you hear on the left, what you meant on the right. Terms on the right are also fed to the transcriber up front, so most of them stop needing correction. Longer replacements work too — \"my email\" can expand to the whole address.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
+        Form {
             if !store.suggestions.isEmpty {
-                Text("Noticed from your edits")
-                    .font(.subheadline).bold()
-                SuggestionRows(store: store)
+                Section("Noticed from your edits") {
+                    ForEach(store.suggestions) { suggestion in
+                        SuggestionRow(store: store, suggestion: suggestion)
+                    }
+                }
             }
 
-            List {
+            Section {
                 ForEach($store.terms) { $term in
                     HStack(spacing: 8) {
-                        TextField("clawed code", text: $term.heard)
+                        // Prompts, not titles: inside a Form a title becomes a label beside
+                        // the field.
+                        TextField("", text: $term.heard, prompt: Text("clawed code"))
                         Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                        TextField("Claude Code", text: $term.meant)
+                        TextField("", text: $term.meant, prompt: Text("Claude Code"))
                         Button {
                             store.terms.removeAll { $0.id == term.id }
                         } label: {
@@ -485,13 +518,19 @@ private struct DictionaryTab: View {
                         }
                         .buttonStyle(.borderless)
                     }
-                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
                 }
-            }
-
-            Button("Add Term", systemImage: "plus") {
-                store.terms.append(Term(heard: "", meant: ""))
+                Button("Add Term", systemImage: "plus") {
+                    store.terms.append(Term(heard: "", meant: ""))
+                }
+                .buttonStyle(.borderless)
+                Text("What you hear on the left, what you meant on the right. Terms on the right are also fed to the transcriber up front, so most of them stop needing correction. Longer replacements work too — \"my email\" can expand to the whole address.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Dictionary")
             }
         }
+        .formStyle(.grouped)
     }
 }

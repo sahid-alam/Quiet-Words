@@ -20,7 +20,7 @@ reasoning and measurements, this file holds the state.
 | Hinglish | Custom language model on `en_IN`; 2 → 8 Hinglish words recognised | `--demo hinglish` |
 | Mic choice, launch at login, sound cues, recordings | Shipped | `--demo devices`, `login` |
 
-Run every check: `for d in audio transcribe dictionary hud window inject devices login languages learning hinglish; do build/QuietWords.app/Contents/MacOS/QuietWords --demo $d | tail -1; done`
+Run every check: `for d in audio transcribe dictionary hud window inject devices login languages learning hinglish ui; do build/QuietWords.app/Contents/MacOS/QuietWords --demo $d | tail -1; done`
 
 ## Decided, with evidence in plan.md
 
@@ -35,7 +35,6 @@ Run every check: `for d in audio transcribe dictionary hud window inject devices
 
 - Hinglish quality on a real voice (checks use a TTS voice).
 - Injection matrix beyond Antigravity: TextEdit, Notes, Safari address bar, Slack, Terminal.
-- All four window panes and the icon — see "App shape" below.
 
 ## App shape — built 2026-09-11, awaiting a look
 
@@ -52,8 +51,19 @@ closing it leaves dictation running. The menu-bar icon stays for status.
   app's own text fields — including our synthetic paste when dictating into them.
 - To go back to menu-bar-only: `.regular` → `.accessory` in `main.swift`.
 
-**Not yet checked by eye.** The layout of all four panes, and the icon, need a person to
-look — nothing offscreen can capture SwiftUI's chrome.
+**Tested end to end with `--demo ui`.** It clicks Home → History → Dictionary → Settings →
+Home → Settings → History → Dictionary → Home on the real window, captures the window
+after every click to `$TMPDIR/quietwords-ui/`, and fails if the window changes size, the
+sidebar is left with nothing selected, a pane renders blank (under 20 brightness levels in
+the content area), or the title bar or sidebar top moves. Review the PNGs in a subagent
+(see Gotchas). Fixed by that run, 2026-09-11:
+
+- **Dictionary rendered completely blank**, with the sidebar collapsed beside it — a VStack
+  of a paragraph, a card and a List asked for 2567pt. Now a grouped Form, like Settings.
+- Clicking empty sidebar space deselected everything. `Router` now refuses nil.
+- Every pane started at a different height and inset. Now they line up.
+- Still there: **clicking Settings costs 100–220ms**, because the Form is rebuilt. Keeping
+  panes built removed that but broke the title bar — see CLAUDE.md trap 13.
 
 ## Next
 
@@ -73,5 +83,6 @@ themselves were not viewed — see below.
 - DictationTranscriber and anything needing TCC must run **inside the bundle**
   (`--demo …`), never from `swift file.swift` — it hangs indefinitely there.
 - Settings fields must stay optional in `Saved`, or adding one resets all preferences.
-- A conversation holding an image over 2000px makes every later image read fail, which
-  is what blocked viewing Mobbin screens here. Downscale screenshots before sharing.
+- A conversation holding an image over 2000px makes every later image read fail. Mobbin's
+  own results are that big, so run Mobbin — and any screenshot review — in a subagent,
+  and have it downscale with `sips -Z 1200` before reading.

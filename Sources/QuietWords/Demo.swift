@@ -17,6 +17,7 @@ func runDemo(_ name: String) async {
     case "dictionary": demoDictionary()
     case "learning": await demoLearning()
     case "window": await demoWindow()
+    case "ui": await demoUI()
     case "login": await demoLogin()
     case "devices": demoDevices()
     case "languages": await demoLanguages()
@@ -480,4 +481,164 @@ private func demoLearning() async {
                  "punctuation-only change was treated as a correction")
     print("  created -> created, -> nothing")
     print("PASS learning")
+}
+
+
+/// CGWindowListCreateImage is marked unavailable in the macOS 26 SDK, but the symbol is
+/// still in CoreGraphics and a process may capture its own windows without a Screen
+/// Recording grant. Looked up at runtime so the check can see what it is testing.
+/// ponytail: test-only; if Apple removes the symbol this returns nil and the check says so.
+@MainActor
+private func captureOwnWindow(_ window: NSWindow) -> CGImage? {
+    typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+    guard let handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW),
+          let symbol = dlsym(handle, "CGWindowListCreateImage") else { return nil }
+    let create = unsafeBitCast(symbol, to: Create.self)
+    // optionIncludingWindow = 1 << 3, boundsIgnoreFraming = 1 << 0
+    return create(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?.takeRetainedValue()
+}
+
+
+/// The title-bar strip, sampled. It must look the same whichever pane is showing — the
+/// sidebar jumping 11px with a new divider under the title bar, after one visit to
+/// Settings, is exactly the kind of change this catches.
+@MainActor
+private func chromeSignature(_ image: CGImage) -> [UInt8] {
+    let rep = NSBitmapImageRep(cgImage: image)
+    // Top 10%: the title bar plus where the sidebar's top edge and the stray divider sit.
+    // 13% reached the first line of each pane's content, which differs by design.
+    let width = rep.pixelsWide, band = Int(Double(rep.pixelsHigh) * 0.10)
+    var samples: [UInt8] = []
+    for y in stride(from: 0, to: band, by: 3) {
+        for x in stride(from: 0, to: width, by: 4) {
+            guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+            samples.append(UInt8((0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent) * 255))
+        }
+    }
+    return samples
+}
+
+/// Distinct brightness levels in the detail area — right of the sidebar, below the title
+/// bar. Drawn panes score 150–210. The blank Dictionary pane scored exactly 1, while a
+/// whole-window check still looked busy because the title bar and sidebar were fine.
+@MainActor
+private func detailVariety(_ image: CGImage) -> Int {
+    let rep = NSBitmapImageRep(cgImage: image)
+    let width = rep.pixelsWide, height = rep.pixelsHigh
+    var levels = Set<Int>()
+    for y in stride(from: Int(Double(height) * 0.15), to: Int(Double(height) * 0.95), by: 3) {
+        for x in stride(from: Int(Double(width) * 0.30), to: Int(Double(width) * 0.97), by: 3) {
+            guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+            levels.insert(Int((0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent) * 255))
+        }
+    }
+    return levels.count
+}
+
+/// Clicks through every pane of the real window in a mixed order, the way a person does,
+/// and records what the window does after each click. No pictures: CGWindowListCreateImage
+/// is gone in the macOS 26 SDK and ScreenCaptureKit needs a Screen Recording grant, so
+/// this checks what can be measured — size, selection, and AppKit's layout warnings.
+///
+/// Synchronous for the same reason as demoWindow: it pumps the run loop by hand.
+@MainActor
+private func demoUI() {
+    NSApplication.shared.setActivationPolicy(.regular)
+    let scratch = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "quietwords-demo-ui")
+    try? FileManager.default.removeItem(at: scratch)
+    let store = Store(directory: scratch)
+    let settings = Settings(directory: scratch)
+    store.terms = [Term(heard: "clawed code", meant: "Claude Code")]
+    store.record(Entry(text: "Hold Right Option and speak — the text lands at the cursor.", duration: 3.4,
+                       app: "com.apple.TextEdit"))
+    store.record(Entry(text: "I opened Claude Code in Xcode and the build is failing on main again.",
+                       duration: 4.1, app: "com.google.antigravity-ide"))
+    store.suggest(Term(heard: "Karendal", meant: "calendar"))
+
+    func pump(_ seconds: Double) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline { CFRunLoopRunInMode(.defaultMode, 0.05, true) }
+    }
+
+    let shots = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "quietwords-ui")
+    try? FileManager.default.removeItem(at: shots)
+    try? FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
+
+    let controller = MainWindowController(store: store, settings: settings)
+    let opening = Date()
+    controller.show(.home)
+    controller.window?.displayIfNeeded()
+    print("  first open \(Int(Date().timeIntervalSince(opening) * 1000))ms")
+    pump(1.2)
+    guard let window = controller.window else { print("FAIL: no window"); exit(1) }
+    // Start from an ordinary size, not whatever the frame autosave remembered — a window
+    // already at the screen's limit cannot show that it grows.
+    window.setFrame(NSRect(x: 120, y: 120, width: 880, height: 580), display: true)
+    pump(0.5)
+    let baseline = "\(Int(window.frame.width))x\(Int(window.frame.height))"
+    print("  start      window \(baseline)")
+
+    let order: [Pane] = [.home, .history, .dictionary, .settings, .home, .settings, .history, .dictionary, .home]
+    var sizes: [String] = []
+    var blank: [String] = []
+    var chrome: [[UInt8]] = []
+    for (step, pane) in order.enumerated() {
+        // How long the main thread is held by the click itself: SwiftUI body, layout and
+        // draw all happen inside displayIfNeeded. Anything slow here is a visible hitch.
+        let started = Date()
+        controller.show(pane)
+        window.displayIfNeeded()
+        let held = Int(Date().timeIntervalSince(started) * 1000)
+        pump(0.8)
+        let frame = window.frame
+        let size = "\(Int(frame.width))x\(Int(frame.height))"
+        sizes.append(size)
+        var shot = "no capture — visual check skipped"
+        if let image = captureOwnWindow(window) {
+            let url = shots.appending(path: "\(step)-\(pane.rawValue).png")
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
+            let variety = detailVariety(image)
+            if variety < 20 { blank.append(pane.title) }
+            chrome.append(chromeSignature(image))
+            shot = "detail \(variety) levels"
+        }
+        print("  \(step) \(pane.title.padding(toLength: 10, withPad: " ", startingAt: 0)) \(String(format: "%4d", held))ms  window \(size)  shown=\(controller.router.pane?.title ?? "nil")  \(shot)")
+    }
+    print("captures: \(shots.path)")
+
+    // Suspects: work SettingsTab does on the main thread while it renders.
+    func time(_ label: String, _ work: () -> Void) {
+        let started = Date()
+        work()
+        print("  \(label.padding(toLength: 34, withPad: " ", startingAt: 0)) \(Int(Date().timeIntervalSince(started) * 1000))ms")
+    }
+    time("settings.loginItemStatus") { _ = settings.loginItemStatus }
+    time("AudioDevices.systemDefault()") { _ = AudioDevices.systemDefault() }
+    time("AudioDevices.preferredWired()") { _ = AudioDevices.preferredWired() }
+
+    // .minSize must still stop the window shrinking below what the layout needs.
+    window.setContentSize(NSSize(width: 300, height: 200))
+    pump(0.4)
+    print("  shrink to 300x200 -> window \(Int(window.frame.width))x\(Int(window.frame.height))")
+    let shrunk = window.frame.width < 760
+    window.setFrame(NSRect(x: 120, y: 120, width: 880, height: 580), display: true)
+    pump(0.3)
+
+    // Clicking the empty part of a sidebar deselects — the pane must not go blank.
+    controller.router.pane = nil
+    pump(0.5)
+    print("  after deselect: router.pane=\(controller.router.pane?.title ?? "nil")")
+
+    let grown = sizes.filter { $0 != baseline }
+    print("window sizes across \(order.count) clicks: \(Set(sizes).sorted()) — started at \(baseline)")
+    if !grown.isEmpty { print("FAIL: the window changed size when switching panes") }
+    if controller.router.pane == nil { print("FAIL: deselecting the sidebar left no pane selected") }
+    if shrunk { print("FAIL: the window shrank below its minimum width") }
+    if !blank.isEmpty { print("FAIL: rendered blank: \(blank)") }
+    let moved = chrome.indices.filter { chrome[$0] != chrome.first }
+    if !moved.isEmpty {
+        print("FAIL: the title bar / sidebar top changed at clicks \(moved) (\(moved.map { order[$0].title }))")
+    }
+    if !grown.isEmpty || controller.router.pane == nil || shrunk || !blank.isEmpty || !moved.isEmpty { exit(1) }
+    print("PASS ui")
 }

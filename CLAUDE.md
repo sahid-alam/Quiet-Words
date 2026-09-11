@@ -124,6 +124,15 @@ AnalyzerInput(buffer: AVAudioPCMBuffer, bufferStartTime: CMTime?)
    `system_profiler SPAudioDataType` during a capture.
 11. **`inputNode.outputFormat(forBus:)` can go stale**; `inputFormat(forBus:)` reports the
    hardware's real format. Use the latter for the tap.
+12. **SwiftUI chrome cannot be captured offscreen, and `CGWindowListCreateImage` is
+   unavailable in the macOS 26 SDK.** The symbol still exists at runtime, though, and an
+   app may capture its own windows without a Screen Recording grant — `--demo ui` looks it
+   up with `dlsym`. Review the PNGs in a subagent: one image over 2000px anywhere in a
+   conversation makes every later image read fail.
+13. **Do not keep window panes built by stacking them in a ZStack.** It removed Settings'
+   100–220ms rebuild, but the title bar latched onto the hidden Settings form's scroll view
+   (the one pane taller than the window) and the sidebar jumped 11px for good.
+   `scrollEdgeEffectHidden` does not help. `--demo ui` fails if this comes back.
 
 ## Conventions
 
@@ -132,7 +141,8 @@ AnalyzerInput(buffer: AVAudioPCMBuffer, bufferStartTime: CMTime?)
   Core Data, until a JSON file measurably hurts.
 - One runnable check per non-trivial phase, all in `Demo.swift`, run from inside the
   bundle so TCC attributes the grants to the app:
-  `build/QuietWords.app/Contents/MacOS/QuietWords --demo audio|transcribe|inject`.
+  `build/QuietWords.app/Contents/MacOS/QuietWords --demo <name>` — the full list is in
+  [docs/status.md](docs/status.md); `ui` drives the real window.
   No committed fixtures — the transcription check renders its own audio with `say`.
 - Log with `os.Logger(subsystem: "com.sahidalam.quietwords", category: ...)`.
   Tail it with `log stream --predicate 'subsystem == "com.sahidalam.quietwords"'`.
