@@ -3,7 +3,8 @@
 Local push-to-talk dictation for macOS. Hold a key, talk, text lands at the cursor.
 Everything runs on-device — no network, no API keys, no subscription.
 
-Full scope and phase order: [docs/plan.md](docs/plan.md). Source transcript that
+**Resuming? Read [docs/status.md](docs/status.md) first** — what is built, what is open,
+and what is next. Full scope, phase order and measurements: [docs/plan.md](docs/plan.md). Source transcript that
 seeded the idea: [docs/resource-yt.md](docs/resource-yt.md).
 
 ## Verified environment
