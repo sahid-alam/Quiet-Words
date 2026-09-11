@@ -38,22 +38,29 @@ Run every check: `for d in audio transcribe dictionary hud window inject devices
 - Settings window layout — offscreen rendering cannot capture SwiftUI chrome, so it has
   never been checked by anything but eyes.
 
-## Next: make it an app, not a menu-bar item
+## App shape — built 2026-09-11, awaiting a look
 
-The user wants Wispr Flow's shape — a real window you open, not only a tray icon.
-Proposal, not yet started:
+Now a regular Dock app, like Wispr Flow: Dock icon, Cmd+Tab, a main menu bar
+(Settings… is Cmd+,), and the window opens at launch. Clicking the Dock icon reopens it;
+closing it leaves dictation running. The menu-bar icon stays for status.
 
-1. **Activation policy `.regular`** — Dock icon, Cmd+Tab, the window opens at launch.
-   Keep the menu-bar item for status. One line in `main.swift`, plus reopening the window
-   from the Dock (`applicationShouldHandleReopen`).
-2. **`NavigationSplitView` with a sidebar** replacing the `TabView`: Home, History,
-   Dictionary, Settings. This also fixes `.searchable`, which needs a navigation container.
-3. **Home** — stats card (words, WPM, streak; `Stats` already exists in `Store.swift`),
-   the last few transcripts, and pending learned-correction suggestions.
-4. **Onboarding window** on first launch — microphone, accessibility, then "hold Right
-   Option and say something" with the result shown live. Today permissions arrive as
-   unexplained system prompts.
-5. **Later, one at a time:** Snippets (voice-triggered text expansion — the dictionary
+- Icon: `scripts/make-icon.swift` draws it; `Resources/AppIcon.icns` is committed and
+  `bundle.sh` copies it in. Rerun the script to change it.
+- Window: sidebar of Home, History, Dictionary, Settings. Home has the words / WPM /
+  streak cards, pending learned corrections, and the last five transcripts. Dictionary
+  shows a badge when corrections are waiting.
+- The main menu also fixes a quiet bug: with no Edit menu, Cmd+C/V did nothing in the
+  app's own text fields — including our synthetic paste when dictating into them.
+- To go back to menu-bar-only: `.regular` → `.accessory` in `main.swift`.
+
+**Not yet checked by eye.** The layout of all four panes, and the icon, need a person to
+look — nothing offscreen can capture SwiftUI's chrome.
+
+## Next
+
+1. **Onboarding window** on first launch — microphone, accessibility, then "hold Right
+   Option and say something" with the result shown live.
+2. **Later, one at a time:** Snippets (voice-triggered text expansion — the dictionary
    already does this for `my email`), Style per app, Command Mode on Apple's model.
 
 Mobbin references pulled (web — Mobbin has no macOS category, and no Wispr Flow):

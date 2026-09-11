@@ -3,12 +3,44 @@ import ServiceManagement
 import Speech
 import SwiftUI
 
-/// History and dictionary. Opened from the menu bar — the app has no Dock icon, so this
-/// window is the only place the app has a face.
+enum Pane: String, CaseIterable, Identifiable {
+    case home, history, dictionary, settings
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .home: "Home"
+        case .history: "History"
+        case .dictionary: "Dictionary"
+        case .settings: "Settings"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .home: "house"
+        case .history: "clock"
+        case .dictionary: "character.book.closed"
+        case .settings: "gearshape"
+        }
+    }
+}
+
+/// Which pane the sidebar shows. Outside the view so the menu bar and Cmd+, can steer it.
+@MainActor
+@Observable
+final class Router {
+    var pane: Pane? = .home
+}
+
+/// The app's window: a sidebar of Home, History, Dictionary and Settings. Opens at launch
+/// and from the Dock; closing it leaves dictation running.
 @MainActor
 final class MainWindowController {
     private let store: Store
     private let settings: Settings
+    private let router = Router()
     private var window: NSWindow?
 
     init(store: Store, settings: Settings) {
@@ -16,21 +48,22 @@ final class MainWindowController {
         self.settings = settings
     }
 
-    func show() {
+    func show(_ pane: Pane? = nil) {
+        if let pane { router.pane = pane }
         if window == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 720, height: 470),
+                contentRect: NSRect(x: 0, y: 0, width: 880, height: 580),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false)
             window.title = "Quiet Words"
-            window.contentView = NSHostingView(rootView: MainView(store: store, settings: settings))
-            window.isReleasedWhenClosed = false   // reopened from the menu, not rebuilt
+            window.contentView = NSHostingView(
+                rootView: MainView(store: store, settings: settings, router: router))
+            window.isReleasedWhenClosed = false   // reopened from the Dock, not rebuilt
             window.center()
+            window.setFrameAutosaveName("QuietWordsMain")
             self.window = window
         }
-        // An accessory app has to activate explicitly or the window opens behind
-        // whatever is frontmost and text fields never take key.
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
     }
@@ -39,16 +72,141 @@ final class MainWindowController {
 private struct MainView: View {
     @Bindable var store: Store
     @Bindable var settings: Settings
+    @Bindable var router: Router
 
     var body: some View {
-        TabView {
-            HistoryTab(store: store, settings: settings).tabItem { Label("History", systemImage: "clock") }
-            DictionaryTab(store: store).tabItem { Label("Dictionary", systemImage: "character.book.closed") }
-            SettingsTab(settings: settings).tabItem { Label("Settings", systemImage: "gearshape") }
+        NavigationSplitView {
+            List(Pane.allCases, selection: $router.pane) { pane in
+                Label(pane.title, systemImage: pane.symbol)
+                    .badge(pane == .dictionary ? store.suggestions.count : 0)
+                    .tag(pane)
+            }
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190)
+        } detail: {
+            switch router.pane ?? .home {
+            case .home:
+                HomeView(store: store, settings: settings) { router.pane = $0 }
+            case .history:
+                HistoryTab(store: store, settings: settings).padding(16)
+            case .dictionary:
+                DictionaryTab(store: store).padding(16)
+            case .settings:
+                SettingsTab(settings: settings)   // a grouped Form brings its own margins
+            }
         }
-        .padding(12)
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(minWidth: 760, minHeight: 500)
     }
+}
+
+private struct HomeView: View {
+    @Bindable var store: Store
+    @Bindable var settings: Settings
+    let open: (Pane) -> Void
+
+    var body: some View {
+        let summary = stats(for: store.history)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Quiet Words").font(.largeTitle).bold()
+                    Text(settings.handsFree
+                         ? "Hold \(settings.hotkey.name) anywhere to dictate. Double-tap to go hands-free."
+                         : "Hold \(settings.hotkey.name) anywhere to dictate.")
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 12) {
+                    StatCard(value: summary.words, label: "words dictated", symbol: "text.word.spacing")
+                    StatCard(value: summary.wordsPerMinute, label: "words per minute", symbol: "speedometer")
+                    StatCard(value: summary.streak, label: "day streak", symbol: "flame")
+                }
+
+                if !store.suggestions.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Noticed from your edits").font(.headline)
+                        SuggestionRows(store: store)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Recent").font(.headline)
+                        Spacer()
+                        if !store.history.isEmpty {
+                            Button("See all") { open(.history) }.buttonStyle(.link)
+                        }
+                    }
+                    if store.history.isEmpty {
+                        ContentUnavailableView("Nothing dictated yet", systemImage: "mic",
+                                               description: Text("Hold \(settings.hotkey.name) and speak."))
+                    } else {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(store.history.prefix(5).enumerated()), id: \.element.id) { index, entry in
+                                if index > 0 { Divider() }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.text).lineLimit(2)
+                                    Text(caption(for: entry)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                            }
+                        }
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: 820, alignment: .leading)
+        }
+    }
+}
+
+private struct StatCard: View {
+    let value: Int
+    let label: String
+    let symbol: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Image(systemName: symbol).foregroundStyle(.secondary)
+            Text(value.formatted()).font(.system(size: 28, weight: .semibold)).monospacedDigit()
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+/// Learned-correction suggestions, shared by Home and Dictionary.
+private struct SuggestionRows: View {
+    @Bindable var store: Store
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(store.suggestions.enumerated()), id: \.element.id) { index, suggestion in
+                if index > 0 { Divider() }
+                HStack(spacing: 8) {
+                    Text(suggestion.heard).foregroundStyle(.secondary)
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                    Text(suggestion.meant)
+                    Spacer()
+                    Button("Add") { store.accept(suggestion) }
+                    Button("No") { store.dismiss(suggestion) }.buttonStyle(.borderless)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 12)
+            }
+        }
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private func caption(for entry: Entry) -> String {
+    let when = entry.date.formatted(date: .abbreviated, time: .shortened)
+    let held = String(format: "%.1fs", entry.duration)
+    let app = entry.app.map { $0.split(separator: ".").last.map(String.init) ?? $0 } ?? "unknown"
+    return "\(when) · \(held) · \(app)"
 }
 
 private struct SettingsTab: View {
@@ -185,7 +343,6 @@ private struct SettingsTab: View {
         }
     }
 
-
     /// Registration fails for an app outside /Applications, and the toggle must not
     /// claim otherwise.
     private var loginItemNote: String {
@@ -213,20 +370,12 @@ private struct HistoryTab: View {
             if store.history.isEmpty {
                 ContentUnavailableView("Nothing dictated yet",
                                        systemImage: "mic",
-                                       description: Text("Hold Right Option and speak."))
+                                       description: Text("Hold \(settings.hotkey.name) and speak."))
             } else {
-                let summary = stats(for: store.history)
-                HStack(spacing: 18) {
-                    stat("\(summary.words)", "words")
-                    stat("\(summary.wordsPerMinute)", "wpm")
-                    stat("\(summary.streak)", summary.streak == 1 ? "day streak" : "day streak")
-                    Spacer()
-                }
-
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    // ponytail: a plain field, not .searchable — that modifier needs a
-                    // navigation container on macOS and silently renders nothing without one.
+                    // ponytail: a plain field rather than .searchable — it works in every
+                    // container, and this one has been seen working.
                     TextField("Search transcripts", text: $search)
                         .textFieldStyle(.plain)
                 }
@@ -305,20 +454,6 @@ private struct HistoryTab: View {
             }
         }
     }
-
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(value).font(.title2).monospacedDigit()
-            Text(label).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    private func caption(for entry: Entry) -> String {
-        let when = entry.date.formatted(date: .abbreviated, time: .shortened)
-        let held = String(format: "%.1fs", entry.duration)
-        let app = entry.app.map { $0.split(separator: ".").last.map(String.init) ?? $0 } ?? "unknown"
-        return "\(when) · \(held) · \(app)"
-    }
 }
 
 private struct DictionaryTab: View {
@@ -334,20 +469,7 @@ private struct DictionaryTab: View {
             if !store.suggestions.isEmpty {
                 Text("Noticed from your edits")
                     .font(.subheadline).bold()
-                List {
-                    ForEach(store.suggestions) { suggestion in
-                        HStack(spacing: 8) {
-                            Text(suggestion.heard).foregroundStyle(.secondary)
-                            Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                            Text(suggestion.meant)
-                            Spacer()
-                            Button("Add") { store.accept(suggestion) }
-                            Button("No") { store.dismiss(suggestion) }
-                                .buttonStyle(.borderless)
-                        }
-                    }
-                }
-                .frame(maxHeight: 110)
+                SuggestionRows(store: store)
             }
 
             List {

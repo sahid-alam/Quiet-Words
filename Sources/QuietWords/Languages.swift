@@ -200,7 +200,7 @@ func buildHinglishModel(at url: URL, locale: Locale, extra: [String] = []) async
     try await data.export(to: url)
     let configuration = SFSpeechLanguageModel.Configuration(languageModel: url)
     try await SFSpeechLanguageModel.prepareCustomLanguageModel(
-        for: url, clientIdentifier: "com.sahidalam.quietwords", configuration: configuration)
+        for: url, configuration: configuration)
     logger.log("hinglish model ready at \(url.lastPathComponent, privacy: .public)")
 }
 

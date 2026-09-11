@@ -68,6 +68,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         store.pruneAudio(olderThan: settings.audioRetentionDays)
         installHotkey()
         buildStatusItem()
+        installMainMenu()
+        mainWindow.show()
+    }
+
+    /// Clicking the Dock icon with the window closed brings it back. Closing the window
+    /// never quits — dictation lives in the hotkey, not the window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { mainWindow.show() }
+        return true
+    }
+
+    /// A regular app with no main menu has no Cmd+Q, and — less obviously — no Cmd+C/V in
+    /// its own text fields, because those key equivalents live on the Edit menu. That
+    /// includes our own synthetic Cmd+V when dictating into the Dictionary tab.
+    private func installMainMenu() {
+        let main = NSMenu()
+
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "About Quiet Words",
+                        action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Quiet Words", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit Quiet Words", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+            .keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        let window = NSMenu(title: "Window")
+        window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+
+        for submenu in [appMenu, edit, window] {
+            let item = NSMenuItem()
+            item.submenu = submenu
+            main.addItem(item)
+        }
+        NSApp.windowsMenu = window
+        NSApp.mainMenu = main
     }
 
     private func handle(_ signal: Hotkey.Signal) {
@@ -185,20 +232,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let input = AudioDevices.systemDefault(), input.isBluetooth {
             let warning = menu.addItem(
                 withTitle: "⚠︎ Recording from \(input.name) — dims its audio",
-                action: #selector(openMainWindow), keyEquivalent: "")
+                action: #selector(openSettings), keyEquivalent: "")
             warning.target = self
             menu.addItem(.separator())
         }
-        let history = menu.addItem(withTitle: "History & Dictionary…",
-                                   action: #selector(openMainWindow), keyEquivalent: "")
-        history.target = self
+        let open = menu.addItem(withTitle: "Open Quiet Words",
+                                action: #selector(openMainWindow), keyEquivalent: "")
+        open.target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Quiet Words", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
     @objc private func openMainWindow() { mainWindow.show() }
-
-    /// Menu title reads "History & Dictionary…" but the window carries settings too.
+    @objc private func openSettings() { mainWindow.show(.settings) }
 
     @objc private func openAccessibilitySettings() {
         NSWorkspace.shared.open(URL(string:
@@ -212,7 +258,9 @@ if let i = CommandLine.arguments.firstIndex(of: "--demo"), i + 1 < CommandLine.a
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
+// A Dock icon and Cmd+Tab, like Wispr Flow. `.accessory` would make it a menu-bar-only
+// agent again — the window still works, it just has no Dock presence.
+app.setActivationPolicy(.regular)
 let delegate = AppDelegate()   // strong ref — app.delegate is weak
 app.delegate = delegate
 app.run()
