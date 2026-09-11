@@ -35,8 +35,7 @@ Run every check: `for d in audio transcribe dictionary hud window inject devices
 
 - Hinglish quality on a real voice (checks use a TTS voice).
 - Injection matrix beyond Antigravity: TextEdit, Notes, Safari address bar, Slack, Terminal.
-- Settings window layout — offscreen rendering cannot capture SwiftUI chrome, so it has
-  never been checked by anything but eyes.
+- All four window panes and the icon — see "App shape" below.
 
 ## App shape — built 2026-09-11, awaiting a look
 
