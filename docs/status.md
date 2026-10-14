@@ -1,6 +1,6 @@
 # Status — where things stand
 
-Snapshot as of 2026-09-11. Read this first when resuming; [plan.md](plan.md) holds the
+Snapshot as of 2026-10-13. Read this first when resuming; [plan.md](plan.md) holds the
 reasoning and measurements, this file holds the state.
 
 ## Built and verified
@@ -16,22 +16,39 @@ reasoning and measurements, this file holds the state.
 | Dictionary | (heard → meant), fed as contextual strings and applied after | `--demo dictionary` |
 | Learned corrections | Watches the field after injection; waits for typing to settle; suggestions need a yes | `--demo learning` |
 | Clean-up | Filler words, optional hedges, stutter collapse (37µs regex) | `--demo dictionary` |
+| Smart clean-up | Gemma 4 E2B (general build) via LiteRT-LM, per segment, on by default; fixes grammar, safety check falls back to raw | `--demo cleanup` |
 | Languages | 54 via two engines (`SpeechTranscriber` preferred, `DictationTranscriber` for the rest) | `--demo languages` |
 | Hinglish | Custom language model on `en_IN`; 2 → 8 Hinglish words recognised | `--demo hinglish` |
 | Mic choice, launch at login, sound cues, recordings | Shipped | `--demo devices`, `login` |
 
-Run every check: `for d in audio transcribe dictionary hud window inject devices login languages learning hinglish ui; do build/QuietWords.app/Contents/MacOS/QuietWords --demo $d | tail -1; done`
+Run every check: `for d in audio transcribe dictionary hud window inject devices login languages learning hinglish cleanup ui; do build/QuietWords.app/Contents/MacOS/QuietWords --demo $d | tail -1; done`
 
 ## Decided, with evidence in plan.md
 
-- **No automatic LLM clean-up.** Apple's on-device model answered dictation instead of
-  cleaning it, or returned it unchanged after 7s. Explicit transforms are where it fits.
+- **Automatic clean-up is Gemma 4 E2B, not Apple's model** (reversed 2026-10-13). Apple's
+  answered dictation or returned it unchanged after 7s. E2B: 0.35–0.6s a segment, loads in
+  2s, ~480 MB footprint, keeps Hinglish in Hinglish. 12B took 3.4–4.5s. Numbers and the
+  safety check's rules in plan.md.
+- **Hinglish assist is on by default** (it is the main use case).
 - **No cloud APIs.** Costs the only structural advantage over Wispr.
 - **No training yet.** Use the rule-based pass daily, read `history.jsonl`, then decide.
   If it happens: LoRA on an open 1–3B via MLX, not an Apple adapter (they break every OS update).
 - **`hi_IN` is not obtainable here** — zero-unit install request. Hinglish goes via the custom LM.
 
 ## Open, needs a human
+
+- Smart clean-up on real speech: hold the key, say two sentences with a "no wait" in them,
+  then `log show --last 2m --predicate 'subsystem == "com.sahidalam.quietwords"'` — the
+  `… after key-up` line is the real latency, and `rejected:` lines (private; enable private
+  data to read them) are outputs the safety check threw out. The checks use `say`.
+- Expect ~0.5s after key-up even for one phrase: each segment is held until the next one
+  shows it is not being corrected, so a one-phrase dictation is cleaned entirely after
+  key-up. Overlap only helps multi-phrase speech. That is the price of applying corrections.
+- The download path (`CleanupModel.ensure`) has not run — the model was moved in by hand
+  on this machine. Move it aside once to see Settings' status line go through it.
+- `--demo audio` reads peakRMS 0 and `--demo ui` fails on Settings (title bar moves at
+  clicks 3 and 5). Both fail identically on eb7ca8d, before the clean-up work — not caused
+  by it, not yet investigated.
 
 - Hinglish quality on a real voice (checks use a TTS voice).
 - Injection matrix beyond Antigravity: TextEdit, Notes, Safari address bar, Slack, Terminal.

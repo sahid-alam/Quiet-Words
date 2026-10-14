@@ -24,6 +24,8 @@ final class Dictation {
     var hinglishModel: URL? {
         didSet { if hinglishModel != oldValue { warmUp() } }
     }
+    /// The clean-up model, once loaded. nil leaves transcripts raw. Read at each key-down.
+    var cleaner: Cleaner?
     /// Where recordings go. nil keeps no audio, which also disables retry and playback.
     var recordingsDirectory: URL?
     /// A latched hands-free session with nobody in the room would otherwise run forever.
@@ -77,7 +79,11 @@ final class Dictation {
             recording = recordingsDirectory?.appending(path: "\(UUID().uuidString).wav")
             let stream = try capture.start(format: session.format, recordTo: recording,
                                            onLevel: onLevel)
-            try await session.start(inputs: stream) { text in
+            var clean: (@Sendable (String) async -> String)?
+            if let cleaner {
+                clean = { segment in await cleaner.clean(segment) ?? segment }
+            }
+            try await session.start(inputs: stream, clean: clean) { text in
                 Task { @MainActor in volatileSink(text) }
             }
             active = session
@@ -100,10 +106,12 @@ final class Dictation {
         active = nil
         autoStop?.cancel()
         capture.stop()
+        let released = ContinuousClock.now
         let text = await session.finish().trimmingCharacters(in: .whitespacesAndNewlines)
         onVolatile("")
         warmUp()
-        logger.log("transcript \(text.count, privacy: .public) chars")
+        // Key-up to text: the latency the user feels. Includes the last segment's clean-up.
+        logger.log("transcript \(text.count, privacy: .public) chars, \(ContinuousClock.now - released, privacy: .public) after key-up")
 
         let audio = recording
         recording = nil

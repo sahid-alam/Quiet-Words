@@ -3,3 +3,4 @@ build/
 .DS_Store
 *.xcuserdatad
 .claude/settings.local.json
+vendor/

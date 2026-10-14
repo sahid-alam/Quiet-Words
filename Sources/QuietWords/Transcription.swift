@@ -105,30 +105,46 @@ final class TranscriptionSession {
     }
 
     /// Begins analysis. `onVolatile` fires with the un-committed tail — display only.
+    /// `clean` runs on each final segment the moment it lands, so clean-up overlaps with
+    /// speech and only the last segment is outstanding when the key comes up.
     func start(
         inputs: some AsyncSequence<AnalyzerInput, Never> & Sendable,
+        clean: (@Sendable (String) async -> String)? = nil,
         onVolatile: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws {
         switch engine {
         case .speech(let module):
             let stream = module.results
-            results = Task { await Self.consume(stream, onVolatile: onVolatile) }
+            results = Task { await Self.consume(stream, clean: clean, onVolatile: onVolatile) }
         case .dictation(let module):
             let stream = module.results
-            results = Task { await Self.consume(stream, onVolatile: onVolatile) }
+            results = Task { await Self.consume(stream, clean: clean, onVolatile: onVolatile) }
         }
         try await analyzer.start(inputSequence: inputs)
     }
 
     private static func consume<Results: AsyncSequence & Sendable>(
         _ stream: Results,
+        clean: (@Sendable (String) async -> String)?,
         onVolatile: @escaping @Sendable (String) -> Void
     ) async -> String where Results.Element: TranscriptResult {
         var final = AttributedString()
+        var cleaned: [Task<String, Never>] = []
+        // Held until the next segment shows it is not part of a correction — see correctionSpans.
+        var held = ""
         do {
             for try await result in stream {
                 if result.isFinal {
                     final += result.text
+                    if let clean {
+                        let segment = String(result.text.characters)
+                        if !held.isEmpty, !correctionSpans(held, segment) {
+                            let ready = held
+                            cleaned.append(Task { await clean(ready) })
+                            held = ""
+                        }
+                        held += segment
+                    }
                     onVolatile("")
                 } else {
                     onVolatile(String(result.text.characters))
@@ -137,7 +153,16 @@ final class TranscriptionSession {
         } catch {
             logger.error("results ended: \(error.localizedDescription, privacy: .public)")
         }
-        return String(final.characters)
+        guard let clean else { return String(final.characters) }
+        // Cancelled: nobody wants the text, so don't make Esc wait on the GPU.
+        // ponytail: segments already handed to the model still run — the C call can't be
+        // interrupted — but the next press only queues behind the one in flight.
+        guard !Task.isCancelled else { return "" }
+        if !held.isEmpty { cleaned.append(Task { [held] in await clean(held) }) }
+        var segments: [String] = []
+        for task in cleaned { segments.append(await task.value) }
+        return segments.map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// Drains what is still in flight and returns the committed transcript.
@@ -170,7 +195,8 @@ func transcribe(
     fileAt url: URL,
     locale: Locale = .current,
     bias: [String] = [],
-    hinglishModel: URL? = nil
+    hinglishModel: URL? = nil,
+    clean: (@Sendable (String) async -> String)? = nil
 ) async throws -> String {
     let session = try await TranscriptionSession.make(locale: locale, hinglishModel: hinglishModel)
     await session.bias(toward: bias)
@@ -180,7 +206,7 @@ func transcribe(
         throw TranscriptionError.noCompatibleFormat
     }
     let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
-    try await session.start(inputs: stream)
+    try await session.start(inputs: stream, clean: clean)
 
     // Bound by framePosition — read(into:) throws at EOF rather than returning 0 frames.
     while file.framePosition < file.length {

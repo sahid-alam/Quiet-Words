@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = Settings()
     private lazy var mainWindow = MainWindowController(store: store, settings: settings)
     private var lastHold: TimeInterval = 0
+    private var cleanupLoad: Task<Void, Never>?
     private let editWatcher = EditWatcher()
     /// Whoever was frontmost at key-down owns the text, even if focus moves while talking.
     private var target: NSRunningApplication?
@@ -175,6 +176,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Downloads once, then loads in the background — ~6s and 2 GB. Dictation works raw
+    /// until it is ready, and turning the setting off frees the memory.
+    private func applyCleanup() {
+        guard settings.aiCleanup else {
+            cleanupLoad?.cancel()
+            cleanupLoad = nil
+            dictation.cleaner = nil
+            settings.cleanupStatus = ""
+            return
+        }
+        guard dictation.cleaner == nil, cleanupLoad == nil else { return }
+        cleanupLoad = Task { @MainActor in
+            defer { cleanupLoad = nil }
+            do {
+                if !CleanupModel.isInstalled {
+                    settings.cleanupStatus = "Downloading the model…"
+                    try await CleanupModel.ensure { fraction in
+                        Task { @MainActor in
+                            self.settings.cleanupStatus = "Downloading the model… \(Int(fraction * 100))%"
+                        }
+                    }
+                }
+                settings.cleanupStatus = "Loading the model…"
+                let cleaner = try await Task.detached { try Cleaner() }.value
+                await cleaner.warmUp()
+                guard settings.aiCleanup else { return }
+                dictation.cleaner = cleaner
+                settings.cleanupStatus = "Ready"
+            } catch {
+                settings.cleanupStatus = "Not available: \(error.localizedDescription)"
+                log.error("clean-up unavailable: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     private func makeHotkey() -> Hotkey? {
         Hotkey(choice: settings.hotkey, handsFree: settings.handsFree) { [weak self] in
             self?.handle($0)
@@ -188,6 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dictation.ceiling = TimeInterval(settings.ceilingMinutes) * 60
         dictation.recordingsDirectory = settings.saveAudio ? store.audioDirectory : nil
         applyHinglish()
+        applyCleanup()
         guard statusItem != nil else { return }   // launch path installs the tap itself
         hotkey = nil                               // release the old tap before the new one
         hotkey = makeHotkey()

@@ -60,7 +60,11 @@ final class Settings {
     var stripFillers = true { didSet { save() } }
     var stripDiscourseMarkers = false { didSet { save() } }
     /// Bias the model toward romanized Hindi. See `hinglishBias`.
-    var hinglishAssist = false { didSet { save(); onChange() } }
+    var hinglishAssist = true { didSet { save(); onChange() } }
+    /// Gemma clean-up of each segment. See Cleanup.swift.
+    var aiCleanup = true { didSet { save(); onChange() } }
+    /// What the clean-up model is doing — downloading, loading, ready. Not saved.
+    var cleanupStatus = ""
     var collapseStutters = true { didSet { save() } }
     /// These three cannot be applied in place — the tap and the warm transcription
     /// session are both built from them, so the app rebuilds when they change.
@@ -89,6 +93,7 @@ final class Settings {
             stripFillers = saved.stripFillers ?? stripFillers
             stripDiscourseMarkers = saved.stripDiscourseMarkers ?? stripDiscourseMarkers
             hinglishAssist = saved.hinglishAssist ?? hinglishAssist
+            aiCleanup = saved.aiCleanup ?? aiCleanup
             collapseStutters = saved.collapseStutters ?? collapseStutters
             handsFree = saved.handsFree ?? handsFree
             hotkeyCode = saved.hotkeyCode ?? hotkeyCode
@@ -149,6 +154,7 @@ final class Settings {
         var stripFillers: Bool?
         var stripDiscourseMarkers: Bool?
         var hinglishAssist: Bool?
+        var aiCleanup: Bool?
         var collapseStutters: Bool?
         var handsFree: Bool?
         var hotkeyCode: Int64?
@@ -163,7 +169,8 @@ final class Settings {
                         audioRetentionDays: audioRetentionDays, ceilingMinutes: ceilingMinutes,
                         stripFillers: stripFillers,
                         stripDiscourseMarkers: stripDiscourseMarkers,
-                        hinglishAssist: hinglishAssist, collapseStutters: collapseStutters,
+                        hinglishAssist: hinglishAssist, aiCleanup: aiCleanup,
+                        collapseStutters: collapseStutters,
                         handsFree: handsFree,
                         hotkeyCode: hotkeyCode, localeIdentifier: localeIdentifier),
                   to: file)

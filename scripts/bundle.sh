@@ -21,9 +21,11 @@ if [ -z "${SIGN_ID:-}" ]; then
 fi
 
 [ -x "$BIN" ] || { echo "missing $BIN — run: swift build -c release" >&2; exit 1; }
+./scripts/fetch-litert.sh   # no-op once vendor/liblitert-lm.dylib exists
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+cp vendor/liblitert-lm.dylib "$APP/Contents/Frameworks/"   # dlopen'd by Cleanup.swift
 cp "$BIN" "$APP/Contents/MacOS/QuietWords"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # from scripts/make-icon.swift
 
@@ -49,6 +51,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 plutil -lint -s "$APP/Contents/Info.plist"
+# Nested code first — signing the app over an unsigned dylib fails.
+codesign --force --sign "$SIGN_ID" "$APP/Contents/Frameworks/liblitert-lm.dylib"
 codesign --force --sign "$SIGN_ID" --identifier "$BUNDLE_ID" "$APP"
 codesign -dv "$APP" 2>&1 | grep -E 'Identifier|Signature'
 echo "built $APP"

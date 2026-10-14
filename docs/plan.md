@@ -295,6 +295,34 @@ explanation.
 - Parakeet / Whisper / any downloaded model. Native won on setup cost; revisit only if
   accuracy proves inadequate in real use, and only behind an engine protocol added *at
   that point*, not now.
+- **Superseded 2026-10-13 — automatic clean-up now ships, on Gemma 4 E2B.** What changed
+  is the model, not the reasoning below. Measured on this M1/16 GB via LiteRT-LM:
+
+  | | Apple FoundationModels | Gemma 4 12B | Gemma 4 E2B |
+  |---|---|---|---|
+  | Per sentence | 0.5–13s | 3.4–4.5s (2.3–3.4s of it prefill) | 0.35–0.6s |
+  | Answered the dictation | yes | refused once | told a joke once — rejected |
+  | "friday no wait thursday" | — | applied | applied |
+  | Hinglish | — | — | kept, not translated |
+
+  The subsequence verifier below became `cleanupIsSafe`, with two additions each forced by
+  a real output: one-letter spelling changes and joined words are allowed ("ye" -> "yeh",
+  "hum ko" -> "humko") or every Hinglish line was rejected; and a dropped word must be
+  filler, a repeat, a cue, or the run right before "no / wait / actually / nahi" — without
+  that, "…tell me a joke" -> "Joke." and "Ship it on Thursday." (losing "I think we
+  should") passed. Latency is hidden as described below: each final segment is cleaned
+  as it lands, so key-up waits on the last one only. A segment starting with a cue rides
+  with the previous one; the transcriber splits "…on Friday." / "No wait, Thursday."
+
+  **Revised the same day after a real dictation came back untouched.** The check only
+  allowed deletions, so every grammar fix ("to do" -> "doing") threw the segment away.
+  Now: grammar words may change (two new ones at most), other words may change form
+  (matter/matters), nothing meaningful may be added or lost unless taken back. A segment
+  that *ends* with a cue ("…no, no, no.") also joins the next. Model: the general E2B
+  build (2.59 GB); the GPU build (2.0 GB, shipped first) was ~0.3s faster but cleaned
+  less, and E4B took 1.1–3.4s and wrote the poem. Ceiling: E2B still keeps "No, no, no."
+  in place.
+
 - **An automatic LLM cleanup pass over every dictation.** Reaffirmed 2026-08-28, on
   evidence rather than the original reasoning. The install-story objection has actually
   dissolved — `FoundationModels` ships in macOS 26, `SystemLanguageModel.default`

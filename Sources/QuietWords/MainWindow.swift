@@ -352,6 +352,13 @@ private struct SettingsTab: View {
             }
 
             Section("Clean-up") {
+                Toggle("Smart clean-up", isOn: $settings.aiCleanup)
+                Text("Gemma 4 on this Mac removes fillers and stutters, keeps only your correction in \"friday no wait thursday\", and leaves Hinglish in Hinglish. Each phrase is cleaned while you are still talking. If the model changes anything but removing words, the original is kept. One-time 2 GB download. The model is read from disk, not copied into memory.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !settings.cleanupStatus.isEmpty {
+                    Text(settings.cleanupStatus).font(.caption).foregroundStyle(.secondary)
+                }
                 Toggle("Remove filler words", isOn: $settings.stripFillers)
                 Text(fillerWords.joined(separator: ", "))
                     .font(.caption).foregroundStyle(.secondary)

@@ -1,7 +1,8 @@
 # Quiet Words
 
 Local push-to-talk dictation for macOS. Hold a key, talk, text lands at the cursor.
-Everything runs on-device — no network, no API keys, no subscription.
+Everything runs on-device — no API keys, no subscription. The only network use is a
+one-time, checksum-pinned download of the clean-up model (Gemma 4 E2B, 2 GB).
 
 **Resuming? Read [docs/status.md](docs/status.md) first** — what is built, what is open,
 and what is next. Full scope, phase order and measurements: [docs/plan.md](docs/plan.md). Source transcript that
@@ -133,6 +134,12 @@ AnalyzerInput(buffer: AVAudioPCMBuffer, bufferStartTime: CMTime?)
    100–220ms rebuild, but the title bar latched onto the hidden Settings form's scroll view
    (the one pane taller than the window) and the sidebar jumped 11px for good.
    `scrollEdgeEffectHidden` does not help. `--demo ui` fails if this comes back.
+14. **Clean-up runs on LiteRT-LM via `dlopen`, not a link.** `scripts/fetch-litert.sh`
+   pulls `liblitert-lm.dylib` (63 MB, pinned 0.18.0) into gitignored `vendor/`; `bundle.sh`
+   signs it into `Contents/Frameworks`. Its C API has no stability promise — the signatures
+   in `Cleanup.swift` were copied from that wheel's `litert_lm/_ffi.py`. Bump both together.
+   Every output must pass `cleanupIsSafe`, and a segment starting with "no / wait / actually"
+   is cleaned together with the one before — cleaned apart, neither half can apply it.
 
 ## Conventions
 
